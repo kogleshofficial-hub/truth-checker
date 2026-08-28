@@ -43,59 +43,45 @@ type OpenRouterResponse = {
   };
 };
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const maxDuration = 60;
+
 const TAVILY_URL = "https://api.tavily.com/search";
-
-const OPENROUTER_URL =
-  "https://openrouter.ai/api/v1/chat/completions";
-
-/*
- * IMPORTANT:
- *
- * Do NOT hard-code a specific :free model here.
- *
- * openrouter/free dynamically chooses from the models
- * currently available in OpenRouter's free pool.
- *
- * This avoids breaking the application whenever one
- * specific free model is removed, renamed, or becomes
- * temporarily unavailable.
- */
+const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const FREE_MODEL = "openrouter/free";
 
 const MAX_CLAIM_LENGTH = 500;
-
 const MAX_EVIDENCE_SOURCES = 5;
+const MAX_EVIDENCE_CHARS_PER_SOURCE = 3000;
+const TAVILY_TIMEOUT_MS = 10000;
+const OPENROUTER_TIMEOUT_MS = 18000;
+const OPENROUTER_ATTEMPTS = 2;
 
-const MAX_EVIDENCE_CHARS_PER_SOURCE = 3500;
-
-const TAVILY_TIMEOUT_MS = 20000;
-
-const OPENROUTER_TIMEOUT_MS = 30000;
-
-/*
- * AbortSignal.timeout() is available in the
- * Next.js/Vercel server runtime.
- */
-function createTimeoutSignal(
-  milliseconds: number
-): AbortSignal {
+function createTimeoutSignal(milliseconds: number): AbortSignal {
   return AbortSignal.timeout(milliseconds);
 }
 
-/**
- * Extract the first complete JSON object from model output.
- *
- * This protects the application if a model returns:
- *
- * ```json
- * { ... }
- * ```
- *
- * or includes a small amount of text around the JSON.
- */
-function extractJsonObject(
-  text: string
-): string | null {
+function createHttpError(message: string, status: number): Error & { status: number } {
+  const error = new Error(message) as Error & { status: number };
+  error.status = status;
+  return error;
+}
+
+function getErrorStatus(error: unknown): number | undefined {
+  if (
+    error &&
+    typeof error === "object" &&
+    "status" in error &&
+    typeof (error as { status?: unknown }).status === "number"
+  ) {
+    return (error as { status: number }).status;
+  }
+
+  return undefined;
+}
+
+function extractJsonObject(text: string): string | null {
   const cleaned = text
     .trim()
     .replace(/^```json\s*/i, "")
@@ -104,20 +90,13 @@ function extractJsonObject(
     .trim();
 
   const firstBrace = cleaned.indexOf("{");
-
-  if (firstBrace === -1) {
-    return null;
-  }
+  if (firstBrace === -1) return null;
 
   let depth = 0;
   let insideString = false;
   let escaped = false;
 
-  for (
-    let index = firstBrace;
-    index < cleaned.length;
-    index++
-  ) {
+  for (let index = firstBrace; index < cleaned.length; index++) {
     const character = cleaned[index];
 
     if (escaped) {
@@ -135,272 +114,170 @@ function extractJsonObject(
       continue;
     }
 
-    if (insideString) {
-      continue;
-    }
+    if (insideString) continue;
 
-    if (character === "{") {
-      depth++;
-    }
+    if (character === "{") depth++;
 
     if (character === "}") {
       depth--;
-
-      if (depth === 0) {
-        return cleaned.slice(
-          firstBrace,
-          index + 1
-        );
-      }
+      if (depth === 0) return cleaned.slice(firstBrace, index + 1);
     }
   }
 
   return null;
 }
 
-/**
- * Validate the structure returned by the AI.
- */
-function isValidInvestigation(
-  value: unknown
-): value is Investigation {
-  if (
-    !value ||
-    typeof value !== "object"
-  ) {
-    return false;
-  }
+function isValidInvestigation(value: unknown): value is Investigation {
+  if (!value || typeof value !== "object") return false;
 
-  const data =
-    value as Record<string, unknown>;
-
+  const data = value as Record<string, unknown>;
   const validVerdicts = [
     "Likely true",
     "Likely false",
     "Misleading",
     "Unclear",
   ];
-
-  const validConfidence = [
-    "High",
-    "Medium",
-    "Low",
-  ];
+  const validConfidence = ["High", "Medium", "Low"];
 
   if (
     typeof data.verdict !== "string" ||
-    !validVerdicts.includes(
-      data.verdict
-    )
-  ) {
-    return false;
-  }
+    !validVerdicts.includes(data.verdict)
+  ) return false;
 
   if (
     typeof data.confidence !== "string" ||
-    !validConfidence.includes(
-      data.confidence
-    )
-  ) {
-    return false;
-  }
+    !validConfidence.includes(data.confidence)
+  ) return false;
 
-  if (
-    typeof data.summary !== "string" ||
-    !data.summary.trim()
-  ) {
-    return false;
-  }
+  if (typeof data.summary !== "string" || !data.summary.trim()) return false;
 
   if (
     !Array.isArray(data.reasoning) ||
     data.reasoning.length < 2 ||
-    data.reasoning.length > 4
-  ) {
-    return false;
-  }
-
-  if (
+    data.reasoning.length > 4 ||
     !data.reasoning.every(
-      (item) =>
-        typeof item === "string" &&
-        item.trim().length > 0
+      (item) => typeof item === "string" && item.trim().length > 0
     )
-  ) {
-    return false;
-  }
+  ) return false;
 
-  if (
-    typeof data.context !== "string" ||
-    !data.context.trim()
-  ) {
-    return false;
-  }
+  if (typeof data.context !== "string" || !data.context.trim()) return false;
 
   if (
     !Array.isArray(data.evidenceToCheck) ||
     data.evidenceToCheck.length < 2 ||
-    data.evidenceToCheck.length > 4
-  ) {
-    return false;
-  }
-
-  if (
+    data.evidenceToCheck.length > 4 ||
     !data.evidenceToCheck.every(
-      (item) =>
-        typeof item === "string" &&
-        item.trim().length > 0
+      (item) => typeof item === "string" && item.trim().length > 0
     )
-  ) {
-    return false;
-  }
+  ) return false;
 
   return true;
 }
 
-/**
- * Search the web using Tavily.
- */
-async function searchEvidence(
-  claim: string
-): Promise<EvidenceSource[]> {
-  const apiKey =
-    process.env.TAVILY_API_KEY;
+async function searchEvidence(claim: string): Promise<EvidenceSource[]> {
+  const apiKey = process.env.TAVILY_API_KEY;
 
   if (!apiKey) {
-    throw new Error(
-      "TAVILY_API_KEY is not configured."
-    );
+    throw createHttpError("Tavily API key is not configured.", 500);
   }
 
-  console.log(
-    "TAVILY_SEARCH_START"
-  );
+  console.log("TAVILY_SEARCH_START");
 
   let response: Response;
 
   try {
-    response = await fetch(
-      TAVILY_URL,
-      {
-        method: "POST",
-
-        headers: {
-          "Content-Type":
-            "application/json",
-        },
-
-        body: JSON.stringify({
-          api_key: apiKey,
-
-          query: claim,
-
-          search_depth: "advanced",
-
-          topic: "general",
-
-          max_results:
-            MAX_EVIDENCE_SOURCES,
-
-          include_answer: false,
-
-          include_raw_content: false,
-        }),
-
-        cache: "no-store",
-
-        signal:
-          createTimeoutSignal(
-            TAVILY_TIMEOUT_MS
-          ),
-      }
-    );
+    response = await fetch(TAVILY_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        api_key: apiKey,
+        query: claim,
+        search_depth: "advanced",
+        topic: "general",
+        max_results: MAX_EVIDENCE_SOURCES,
+        include_answer: false,
+        include_raw_content: false,
+      }),
+      cache: "no-store",
+      signal: createTimeoutSignal(TAVILY_TIMEOUT_MS),
+    });
   } catch (error) {
-    console.error(
-      "TAVILY_REQUEST_FAILED:",
-      error
-    );
+    console.error("TAVILY_REQUEST_FAILED:", error);
 
-    throw new Error(
-      "The evidence search could not be reached."
+    if (error instanceof Error && error.name === "TimeoutError") {
+      throw createHttpError(
+        "The evidence search took too long. Please try again.",
+        504
+      );
+    }
+
+    throw createHttpError(
+      "The evidence search could not be reached.",
+      502
     );
   }
 
-  if (!response.ok) {
-    const errorText =
-      await response.text();
+  const rawText = await response.text();
 
+  if (!response.ok) {
     console.error(
-      "TAVILY_ERROR:",
+      "TAVILY_HTTP_ERROR:",
       response.status,
-      errorText.slice(0, 3000)
+      rawText.slice(0, 2000)
     );
 
-    throw new Error(
-      `The evidence search failed (${response.status}).`
+    if (response.status === 429) {
+      throw createHttpError(
+        "The evidence search is temporarily rate-limited. Please try again shortly.",
+        429
+      );
+    }
+
+    throw createHttpError(
+      `The evidence search failed (${response.status}).`,
+      502
     );
   }
 
   let data: TavilyResponse;
 
   try {
-    data =
-      (await response.json()) as TavilyResponse;
+    data = JSON.parse(rawText) as TavilyResponse;
   } catch (error) {
-    console.error(
-      "TAVILY_INVALID_JSON:",
-      error
-    );
-
-    throw new Error(
-      "The evidence search returned invalid data."
+    console.error("TAVILY_INVALID_JSON:", error);
+    throw createHttpError(
+      "The evidence search returned invalid data.",
+      502
     );
   }
 
-  const sources =
-    (data.results ?? [])
-      .filter(
-        (item) =>
-          typeof item.title === "string" &&
-          typeof item.url === "string"
-      )
-      .map((item) => ({
-        title:
-          item.title as string,
+  const sources = (data.results ?? [])
+    .filter(
+      (item) =>
+        typeof item.title === "string" &&
+        typeof item.url === "string"
+    )
+    .map((item) => ({
+      title: item.title as string,
+      url: item.url as string,
+      snippet:
+        typeof item.content === "string"
+          ? item.content
+          : "No source summary was provided.",
+    }))
+    .slice(0, MAX_EVIDENCE_SOURCES);
 
-        url:
-          item.url as string,
-
-        snippet:
-          typeof item.content === "string"
-            ? item.content
-            : "No summary available.",
-      }))
-      .slice(
-        0,
-        MAX_EVIDENCE_SOURCES
-      );
-
-  console.log(
-    `TAVILY_SEARCH_COMPLETE: ${sources.length} sources`
-  );
-
+  console.log(`TAVILY_SEARCH_COMPLETE: ${sources.length} sources`);
   return sources;
 }
 
-/**
- * Convert evidence into a compact prompt section.
- */
-function buildEvidenceText(
-  evidence: EvidenceSource[]
-): string {
+function buildEvidenceText(evidence: EvidenceSource[]): string {
   return evidence
     .map((source, index) => {
-      const snippet =
-        source.snippet.slice(
-          0,
-          MAX_EVIDENCE_CHARS_PER_SOURCE
-        );
+      const snippet = source.snippet.slice(
+        0,
+        MAX_EVIDENCE_CHARS_PER_SOURCE
+      );
 
       return [
         `SOURCE ${index + 1}`,
@@ -409,44 +286,23 @@ function buildEvidenceText(
         `Content: ${snippet}`,
       ].join("\n");
     })
-    .join(
-      "\n\n--------------------\n\n"
-    );
+    .join("\n\n--------------------\n\n");
 }
 
-/**
- * Build the investigation prompt.
- */
-function buildPrompt(
-  claim: string,
-  evidence: EvidenceSource[]
-): string {
-  return `
-You are the analysis engine for a web evidence checker.
+function buildPrompt(claim: string, evidence: EvidenceSource[]): string {
+  return `You are the evidence-analysis engine for Truth Checker.
 
-Analyze the CLAIM using ONLY the supplied WEB EVIDENCE.
+Evaluate the CLAIM using ONLY the WEB EVIDENCE supplied below.
 
-Be neutral, conservative, and evidence-based.
-
-Do not invent:
-- facts
-- sources
-- URLs
-- statistics
-- quotations
-- dates
-
-Do not use outside knowledge as evidence.
-
-Compare the supplied sources.
-
-If sources agree, explain the agreement.
-
-If sources disagree, explain the disagreement.
-
-If the evidence is insufficient, use "Unclear".
-
-"Not proven" does not automatically mean "Likely false".
+Rules:
+1. Do not use outside knowledge as evidence.
+2. Do not invent facts, sources, URLs, dates, statistics, or quotations.
+3. Compare sources instead of trusting one source automatically.
+4. Decide whether each source supports, contradicts, or only discusses the claim.
+5. Do not treat absence of proof as proof of falsity.
+6. Use "Unclear" when the supplied evidence is insufficient or genuinely conflicting.
+7. Use "Misleading" when the claim is materially incomplete, exaggerated, or context-dependent.
+8. Confidence reflects how strongly the supplied evidence supports the verdict.
 
 Allowed verdicts:
 - Likely true
@@ -459,174 +315,79 @@ Allowed confidence:
 - Medium
 - Low
 
-Return ONLY valid JSON.
+Return ONLY one valid JSON object. No markdown. No code fences. No text before or after it.
 
-The JSON must contain exactly these fields:
-
+Return exactly this structure:
 {
   "verdict": "Likely true",
   "confidence": "High",
-  "summary": "Short explanation.",
+  "summary": "Concise evidence-based explanation.",
   "reasoning": [
-    "Reason one.",
-    "Reason two."
+    "Specific reason based on the supplied evidence.",
+    "Another specific reason based on the supplied evidence."
   ],
-  "context": "Important nuance.",
+  "context": "Important qualification or limitation.",
   "evidenceToCheck": [
-    "Evidence category one.",
-    "Evidence category two."
+    "A useful evidence category to verify.",
+    "Another useful evidence category to verify."
   ]
 }
 
 Requirements:
-
-- reasoning must contain 2 to 4 items
-- evidenceToCheck must contain 2 to 4 items
-- summary must be concise
-- context must be concise
-- no markdown
-- no code fences
+- reasoning: 2 to 4 strings
+- evidenceToCheck: 2 to 4 strings
+- summary: concise
+- context: concise
 - no additional fields
 
 CLAIM:
 ${claim}
 
 WEB EVIDENCE:
-${buildEvidenceText(evidence)}
-`.trim();
+${buildEvidenceText(evidence)}`.trim();
 }
 
-/**
- * JSON Schema used for structured output.
- */
-const responseSchema = {
-  type: "object",
+function createEvidenceOnlyFallback(
+  claim: string,
+  evidence: EvidenceSource[]
+): Investigation {
+  const domains = Array.from(
+    new Set(
+      evidence.map((source) => {
+        try {
+          return new URL(source.url).hostname.replace(/^www\./, "");
+        } catch {
+          return "source";
+        }
+      })
+    )
+  ).slice(0, 4);
 
-  properties: {
-    verdict: {
-      type: "string",
-
-      enum: [
-        "Likely true",
-        "Likely false",
-        "Misleading",
-        "Unclear",
-      ],
-    },
-
-    confidence: {
-      type: "string",
-
-      enum: [
-        "High",
-        "Medium",
-        "Low",
-      ],
-    },
-
-    summary: {
-      type: "string",
-    },
-
-    reasoning: {
-      type: "array",
-
-      items: {
-        type: "string",
-      },
-
-      minItems: 2,
-
-      maxItems: 4,
-    },
-
-    context: {
-      type: "string",
-    },
-
-    evidenceToCheck: {
-      type: "array",
-
-      items: {
-        type: "string",
-      },
-
-      minItems: 2,
-
-      maxItems: 4,
-    },
-  },
-
-  required: [
-    "verdict",
-    "confidence",
-    "summary",
-    "reasoning",
-    "context",
-    "evidenceToCheck",
-  ],
-
-  additionalProperties: false,
-};
-
-/**
- * Get a status code from an Error object.
- */
-function getErrorStatus(
-  error: unknown
-): number | undefined {
-  if (
-    error &&
-    typeof error === "object" &&
-    "status" in error &&
-    typeof (
-      error as {
-        status?: unknown;
-      }
-    ).status === "number"
-  ) {
-    return (
-      error as {
-        status: number;
-      }
-    ).status;
-  }
-
-  return undefined;
+  return {
+    verdict: "Unclear",
+    confidence: "Low",
+    summary:
+      `The web search found ${evidence.length} source${evidence.length === 1 ? "" : "s"}, but the AI analysis service did not return a usable result. No factual verdict was assigned.`,
+    reasoning: [
+      "The claim was searched against available web evidence, but automated synthesis could not be completed reliably.",
+      domains.length
+        ? `Retrieved evidence came from: ${domains.join(", ")}.`
+        : "Retrieved evidence could not be reliably identified by domain.",
+    ],
+    context:
+      `Claim checked: "${claim}". Truth Checker uses a safe fallback instead of guessing when AI analysis fails.`,
+    evidenceToCheck: [
+      "Primary or official sources directly addressing the claim",
+      "Independent high-quality sources that confirm or contradict the claim",
+    ],
+  };
 }
 
-/**
- * Attach an HTTP status to an Error.
- */
-function createHttpError(
-  message: string,
-  status: number
-): Error & { status: number } {
-  const error =
-    new Error(message) as Error & {
-      status: number;
-    };
-
-  error.status = status;
-
-  return error;
-}
-
-/**
- * Call OpenRouter.
- *
- * IMPORTANT:
- * We use openrouter/free instead of a hard-coded
- * model such as openai/gpt-oss-20b:free.
- *
- * OpenRouter's free router chooses from the
- * currently available free models.
- */
-async function callOpenRouter(
-  prompt: string
+async function callOpenRouterOnce(
+  prompt: string,
+  attempt: number
 ): Promise<Investigation> {
-  const apiKey =
-    process.env.OPENROUTER_API_KEY;
+  const apiKey = process.env.OPENROUTER_API_KEY;
 
   if (!apiKey) {
     throw createHttpError(
@@ -636,193 +397,94 @@ async function callOpenRouter(
   }
 
   console.log(
-    `OPENROUTER_REQUEST_START: ${FREE_MODEL}`
+    `OPENROUTER_REQUEST_START: model=${FREE_MODEL} attempt=${attempt}`
   );
 
   let response: Response;
 
   try {
-    response = await fetch(
-      OPENROUTER_URL,
-      {
-        method: "POST",
-
-        headers: {
-          Authorization:
-            `Bearer ${apiKey}`,
-
-          "Content-Type":
-            "application/json",
-
-          "HTTP-Referer":
-            "https://truth-checker-app.vercel.app",
-
-          "X-Title":
-            "Truth Checker",
-        },
-
-        body: JSON.stringify({
-          model: FREE_MODEL,
-
-          messages: [
-            {
-              role: "system",
-
-              content:
-                "Return only the JSON object requested by the user. Do not include markdown or additional text.",
-            },
-
-            {
-              role: "user",
-
-              content: prompt,
-            },
-          ],
-
-          /*
-           * Ask OpenRouter for structured JSON.
-           *
-           * The Free Models Router can select free
-           * models that support the required capability.
-           */
-          response_format: {
-            type: "json_schema",
-
-            json_schema: {
-              name:
-                "truth_checker_investigation",
-
-              strict: true,
-
-              schema:
-                responseSchema,
-            },
+    response = await fetch(OPENROUTER_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://truth-checker-app.vercel.app",
+        "X-Title": "Truth Checker",
+      },
+      body: JSON.stringify({
+        model: FREE_MODEL,
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are a careful evidence-analysis engine. Return only valid JSON matching the requested structure. Never use markdown.",
           },
-
-          temperature: 0,
-
-          max_tokens: 700,
-
-          stream: false,
-        }),
-
-        cache: "no-store",
-
-        signal:
-          createTimeoutSignal(
-            OPENROUTER_TIMEOUT_MS
-          ),
-      }
-    );
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+        temperature: 0,
+        max_tokens: 900,
+        stream: false,
+      }),
+      cache: "no-store",
+      signal: createTimeoutSignal(OPENROUTER_TIMEOUT_MS),
+    });
   } catch (error) {
-    console.error(
-      "OPENROUTER_NETWORK_ERROR:",
-      error
-    );
+    console.error("OPENROUTER_NETWORK_ERROR:", error);
 
-    if (
-      error instanceof Error &&
-      error.name === "TimeoutError"
-    ) {
+    if (error instanceof Error && error.name === "TimeoutError") {
       throw createHttpError(
-        "The AI provider took too long to respond. Please try again shortly.",
+        "The AI provider took too long to respond.",
         504
       );
     }
 
-    throw createHttpError(
-      "Could not reach OpenRouter.",
-      502
-    );
+    throw createHttpError("Could not reach OpenRouter.", 502);
   }
 
-  const rawText =
-    await response.text();
+  const rawText = await response.text();
 
-  /*
-   * Always keep the actual provider response
-   * in the server logs for debugging.
-   */
+  console.log(
+    "OPENROUTER_HTTP_RESPONSE:",
+    JSON.stringify({
+      status: response.status,
+      body: rawText.slice(0, 2000),
+    })
+  );
+
   if (!response.ok) {
-    console.error(
-      "OPENROUTER_HTTP_ERROR:",
-      JSON.stringify({
-        model: FREE_MODEL,
-
-        status:
-          response.status,
-
-        body:
-          rawText.slice(
-            0,
-            5000
-          ),
-      })
-    );
-
-    let providerMessage =
-      "";
+    let providerMessage = "";
 
     try {
-      const providerData =
-        JSON.parse(
-          rawText
-        ) as OpenRouterResponse;
-
+      const providerData = JSON.parse(rawText) as OpenRouterResponse;
       if (
         providerData.error &&
-        typeof providerData.error.message ===
-          "string"
+        typeof providerData.error.message === "string"
       ) {
-        providerMessage =
-          providerData.error.message;
+        providerMessage = providerData.error.message;
       }
     } catch {
-      /*
-       * Provider returned something other
-       * than JSON. Keep the raw status.
-       */
+      // Keep the generic message when the provider did not return JSON.
     }
 
-    /*
-     * Convert common provider failures into
-     * useful application errors.
-     */
-    if (
-      response.status === 429
-    ) {
+    if (response.status === 429) {
       throw createHttpError(
-        "The free AI models are temporarily rate-limited. Please try again shortly.",
+        "The free AI models are temporarily rate-limited.",
         429
       );
     }
 
-    if (
-      response.status === 404
-    ) {
+    if ([408, 500, 502, 503, 504].includes(response.status)) {
       throw createHttpError(
-        providerMessage ||
-          "The OpenRouter free model router is temporarily unavailable.",
-        503
-      );
-    }
-
-    if (
-      response.status === 408 ||
-      response.status === 500 ||
-      response.status === 502 ||
-      response.status === 503 ||
-      response.status === 504
-    ) {
-      throw createHttpError(
-        "The AI provider is temporarily unavailable. Please try again shortly.",
+        "The AI provider is temporarily unavailable.",
         503
       );
     }
 
     throw createHttpError(
-      providerMessage ||
-        `OpenRouter request failed (${response.status}).`,
+      providerMessage || `OpenRouter request failed (${response.status}).`,
       response.status
     );
   }
@@ -830,58 +492,27 @@ async function callOpenRouter(
   let data: OpenRouterResponse;
 
   try {
-    data =
-      JSON.parse(
-        rawText
-      ) as OpenRouterResponse;
+    data = JSON.parse(rawText) as OpenRouterResponse;
   } catch (error) {
-    console.error(
-      "OPENROUTER_INVALID_JSON:",
-      rawText.slice(0, 5000)
-    );
-
+    console.error("OPENROUTER_INVALID_JSON:", error);
     throw createHttpError(
       "OpenRouter returned invalid response data.",
       502
     );
   }
 
-  /*
-   * OpenRouter can return an API-level error
-   * inside an otherwise successful HTTP response.
-   */
   if (data.error) {
     const message =
-      typeof data.error.message ===
-      "string"
+      typeof data.error.message === "string"
         ? data.error.message
         : "OpenRouter returned an API error.";
 
-    console.error(
-      "OPENROUTER_API_ERROR:",
-      JSON.stringify({
-        code:
-          data.error.code,
-
-        message,
-      })
-    );
-
-    throw createHttpError(
-      message,
-      502
-    );
+    throw createHttpError(message, 502);
   }
 
-  const choice =
-    data.choices?.[0];
+  const choice = data.choices?.[0];
 
   if (!choice) {
-    console.error(
-      "OPENROUTER_NO_CHOICE:",
-      rawText.slice(0, 5000)
-    );
-
     throw createHttpError(
       "OpenRouter returned no model response.",
       502
@@ -889,25 +520,18 @@ async function callOpenRouter(
   }
 
   const content =
-    typeof choice.message?.content ===
-    "string"
+    typeof choice.message?.content === "string"
       ? choice.message.content.trim()
       : "";
 
   console.log(
-    "OPENROUTER_RESPONSE:",
+    "OPENROUTER_RESPONSE_META:",
     JSON.stringify({
-      requestedModel:
-        FREE_MODEL,
-
-      actualModel:
-        data.model,
-
-      finishReason:
-        choice.finish_reason,
-
-      hasContent:
-        Boolean(content),
+      requestedModel: FREE_MODEL,
+      actualModel: data.model,
+      finishReason: choice.finish_reason,
+      hasContent: Boolean(content),
+      contentLength: content.length,
     })
   );
 
@@ -918,17 +542,10 @@ async function callOpenRouter(
     );
   }
 
-  const jsonText =
-    extractJsonObject(
-      content
-    );
+  const jsonText = extractJsonObject(content);
 
   if (!jsonText) {
-    console.error(
-      "OPENROUTER_NO_JSON:",
-      content.slice(0, 5000)
-    );
-
+    console.error("OPENROUTER_NO_JSON:", content.slice(0, 3000));
     throw createHttpError(
       "The AI returned no usable JSON.",
       502
@@ -938,40 +555,19 @@ async function callOpenRouter(
   let parsed: unknown;
 
   try {
-    parsed =
-      JSON.parse(
-        jsonText
-      );
+    parsed = JSON.parse(jsonText);
   } catch (error) {
-    console.error(
-      "OPENROUTER_JSON_PARSE_ERROR:",
-      error
-    );
-
-    console.error(
-      "OPENROUTER_CONTENT:",
-      content.slice(0, 5000)
-    );
-
+    console.error("OPENROUTER_JSON_PARSE_ERROR:", error);
     throw createHttpError(
       "The AI returned invalid JSON.",
       502
     );
   }
 
-  if (
-    !isValidInvestigation(
-      parsed
-    )
-  ) {
+  if (!isValidInvestigation(parsed)) {
     console.error(
       "OPENROUTER_INVALID_INVESTIGATION:",
-      JSON.stringify(
-        parsed
-      ).slice(
-        0,
-        5000
-      )
+      JSON.stringify(parsed).slice(0, 3000)
     );
 
     throw createHttpError(
@@ -983,204 +579,113 @@ async function callOpenRouter(
   return parsed;
 }
 
-/**
- * Analyze evidence with OpenRouter.
- *
- * There is deliberately NO hard-coded model fallback here.
- *
- * openrouter/free is itself a dynamic free-model router.
- *
- * If OpenRouter is temporarily rate-limited or unavailable,
- * we return a useful error instead of repeatedly hitting
- * dead model slugs.
- */
 async function analyzeWithOpenRouter(
-  claim: string,
-  evidence: EvidenceSource[]
+  prompt: string
 ): Promise<Investigation> {
-  const prompt =
-    buildPrompt(
-      claim,
-      evidence
-    );
+  let lastError: unknown;
 
-  try {
-    return await callOpenRouter(
-      prompt
-    );
-  } catch (error) {
-    const status =
-      getErrorStatus(
+  for (let attempt = 1; attempt <= OPENROUTER_ATTEMPTS; attempt++) {
+    try {
+      return await callOpenRouterOnce(prompt, attempt);
+    } catch (error) {
+      lastError = error;
+      console.error(
+        `OPENROUTER_ATTEMPT_FAILED: ${attempt}`,
         error
       );
 
-    console.error(
-      "OPENROUTER_ANALYSIS_FAILED:",
-      JSON.stringify({
-        status,
-
-        message:
-          error instanceof Error
-            ? error.message
-            : String(error),
-      })
-    );
-
-    throw error;
+      if (attempt < OPENROUTER_ATTEMPTS) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+    }
   }
+
+  throw lastError instanceof Error
+    ? lastError
+    : createHttpError("AI analysis failed.", 502);
 }
 
-/**
- * POST /api/check
- */
-export async function POST(
-  request: Request
-) {
+export async function POST(request: Request) {
   try {
-    /*
-     * Parse request body.
-     */
-    const body: unknown =
-      await request.json();
+    const body: unknown = await request.json();
 
-    /*
-     * Extract claim safely.
-     */
     const claim =
       typeof body === "object" &&
       body !== null &&
       "claim" in body &&
-      typeof (
-        body as {
-          claim?: unknown;
-        }
-      ).claim === "string"
-        ? (
-            body as {
-              claim: string;
-            }
-          ).claim.trim()
+      typeof (body as { claim?: unknown }).claim === "string"
+        ? (body as { claim: string }).claim.trim()
         : "";
 
-    /*
-     * Validate claim.
-     */
     if (!claim) {
       return NextResponse.json(
         {
           success: false,
-
-          error:
-            "Please enter a claim to investigate.",
+          error: "Please enter a claim to investigate.",
         },
-        {
-          status: 400,
-        }
+        { status: 400 }
       );
     }
 
-    if (
-      claim.length >
-      MAX_CLAIM_LENGTH
-    ) {
+    if (claim.length > MAX_CLAIM_LENGTH) {
       return NextResponse.json(
         {
           success: false,
-
-          error:
-            `Claims must be ${MAX_CLAIM_LENGTH} characters or fewer.`,
+          error: `Claims must be ${MAX_CLAIM_LENGTH} characters or fewer.`,
         },
-        {
-          status: 400,
-        }
+        { status: 400 }
       );
     }
 
-    /*
-     * Check required environment variables.
-     */
-    if (
-      !process.env.TAVILY_API_KEY
-    ) {
+    if (!process.env.TAVILY_API_KEY) {
       return NextResponse.json(
         {
           success: false,
-
-          error:
-            "Tavily API key is not configured.",
+          error: "Tavily API key is not configured.",
         },
-        {
-          status: 500,
-        }
+        { status: 500 }
       );
     }
 
-    if (
-      !process.env.OPENROUTER_API_KEY
-    ) {
+    if (!process.env.OPENROUTER_API_KEY) {
       return NextResponse.json(
         {
           success: false,
-
-          error:
-            "OpenRouter API key is not configured.",
+          error: "OpenRouter API key is not configured.",
         },
-        {
-          status: 500,
-        }
+        { status: 500 }
       );
     }
 
-    console.log(
-      "TRUTH_CHECKER_START"
-    );
+    console.log("TRUTH_CHECKER_START");
 
-    /*
-     * STEP 1:
-     * Search the web.
-     */
-    console.log(
-      "TRUTH_CHECKER_SEARCHING"
-    );
-
-    const evidence =
-      await searchEvidence(
-        claim
-      );
+    const evidence = await searchEvidence(claim);
 
     console.log(
       `TRUTH_CHECKER_EVIDENCE_COUNT: ${evidence.length}`
     );
 
-    if (
-      evidence.length === 0
-    ) {
+    if (evidence.length === 0) {
       return NextResponse.json(
         {
           success: false,
-
-          error:
-            "No web evidence was found for this claim.",
+          error: "No web evidence was found for this claim.",
         },
-        {
-          status: 502,
-        }
+        { status: 502 }
       );
     }
 
-    /*
-     * STEP 2:
-     * Analyze the collected evidence.
-     */
-    console.log(
-      "TRUTH_CHECKER_ANALYZING"
-    );
+    let investigation: Investigation;
 
-    const investigation =
-      await analyzeWithOpenRouter(
-        claim,
-        evidence
+    try {
+      console.log("TRUTH_CHECKER_ANALYZING");
+      investigation = await analyzeWithOpenRouter(
+        buildPrompt(claim, evidence)
       );
+    } catch (error) {
+      console.error("TRUTH_CHECKER_AI_FALLBACK:", error);
+      investigation = createEvidenceOnlyFallback(claim, evidence);
+    }
 
     console.log(
       "TRUTH_CHECKER_COMPLETE:",
@@ -1188,102 +693,30 @@ export async function POST(
       investigation.confidence
     );
 
-    /*
-     * STEP 3:
-     * Return the complete investigation.
-     */
     return NextResponse.json({
       success: true,
-
       claim,
-
       investigation,
-
       evidence,
     });
   } catch (error) {
-    console.error(
-      "TRUTH_CHECKER_API_ERROR:",
-      error
-    );
+    console.error("TRUTH_CHECKER_API_ERROR:", error);
 
     const message =
       error instanceof Error
         ? error.message
         : "The investigation could not be completed.";
 
-    const status =
-      getErrorStatus(
-        error
-      );
+    const status = getErrorStatus(error);
 
-    /*
-     * Rate limit.
-     */
-    if (
-      status === 429
-    ) {
-      return NextResponse.json(
-        {
-          success: false,
-
-          error: message,
-        },
-        {
-          status: 429,
-        }
-      );
-    }
-
-    /*
-     * Timeout.
-     */
-    if (
-      status === 504
-    ) {
-      return NextResponse.json(
-        {
-          success: false,
-
-          error: message,
-        },
-        {
-          status: 504,
-        }
-      );
-    }
-
-    /*
-     * Temporary provider failure.
-     */
-    if (
-      status === 502 ||
-      status === 503
-    ) {
-      return NextResponse.json(
-        {
-          success: false,
-
-          error: message,
-        },
-        {
-          status,
-        }
-      );
-    }
-
-    /*
-     * Validation / application errors.
-     */
     return NextResponse.json(
       {
         success: false,
-
         error: message,
       },
       {
         status:
-          status && status >= 400
+          status && status >= 400 && status <= 599
             ? status
             : 500,
       }
