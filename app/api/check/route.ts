@@ -48,15 +48,15 @@ const OPENROUTER_URL =
   "https://openrouter.ai/api/v1/chat/completions";
 
 /*
- * Primary model:
- * OpenAI gpt-oss-20b is currently available as a free OpenRouter model
- * and supports structured outputs.
- *
- * Fallback:
- * OpenRouter's free router can select another currently available
- * free model.
+ * OpenRouter currently lists this as a free model.
+ * It supports structured JSON output.
  */
 const PRIMARY_MODEL = "openai/gpt-oss-20b:free";
+
+/*
+ * OpenRouter's free router is used only if the primary
+ * model is temporarily unavailable or rate-limited.
+ */
 const FALLBACK_MODEL = "openrouter/free";
 
 const MAX_CLAIM_LENGTH = 500;
@@ -64,7 +64,7 @@ const MAX_EVIDENCE_SOURCES = 5;
 const MAX_EVIDENCE_CHARS_PER_SOURCE = 3500;
 
 const TAVILY_TIMEOUT_MS = 20000;
-const OPENROUTER_TIMEOUT_MS = 25000;
+const OPENROUTER_TIMEOUT_MS = 30000;
 
 function createTimeoutSignal(
   milliseconds: number
@@ -73,10 +73,7 @@ function createTimeoutSignal(
 }
 
 /**
- * Attempts to find a JSON object inside arbitrary model output.
- *
- * This is intentionally defensive because free models may sometimes
- * return markdown, explanations, or other text around the JSON.
+ * Extract the first complete JSON object from model output.
  */
 function extractJsonObject(
   text: string
@@ -156,14 +153,14 @@ function isValidInvestigation(
   const data =
     value as Record<string, unknown>;
 
-  const verdicts = [
+  const validVerdicts = [
     "Likely true",
     "Likely false",
     "Misleading",
     "Unclear",
   ];
 
-  const confidenceLevels = [
+  const validConfidence = [
     "High",
     "Medium",
     "Low",
@@ -171,14 +168,16 @@ function isValidInvestigation(
 
   if (
     typeof data.verdict !== "string" ||
-    !verdicts.includes(data.verdict)
+    !validVerdicts.includes(
+      data.verdict
+    )
   ) {
     return false;
   }
 
   if (
     typeof data.confidence !== "string" ||
-    !confidenceLevels.includes(
+    !validConfidence.includes(
       data.confidence
     )
   ) {
@@ -187,7 +186,7 @@ function isValidInvestigation(
 
   if (
     typeof data.summary !== "string" ||
-    data.summary.trim().length === 0
+    !data.summary.trim()
   ) {
     return false;
   }
@@ -212,7 +211,7 @@ function isValidInvestigation(
 
   if (
     typeof data.context !== "string" ||
-    data.context.trim().length === 0
+    !data.context.trim()
   ) {
     return false;
   }
@@ -300,7 +299,7 @@ async function searchEvidence(
     console.error(
       "TAVILY_ERROR:",
       response.status,
-      errorText.slice(0, 2000)
+      errorText.slice(0, 3000)
     );
 
     throw new Error(
@@ -381,53 +380,44 @@ function buildPrompt(
   evidence: EvidenceSource[]
 ): string {
   return `
-You are the AI analysis engine for a web evidence checker.
+You are the analysis engine for a web evidence checker.
 
-Your ONLY job is to analyze the supplied claim using ONLY the supplied web evidence.
+Analyze the CLAIM using ONLY the supplied WEB EVIDENCE.
+
+Be neutral, conservative, and evidence-based.
+
+Do not invent:
+- facts
+- sources
+- URLs
+- statistics
+- quotations
+- dates
 
 Do not use outside knowledge as evidence.
 
-Rules:
+Compare the supplied sources.
 
-- Be neutral.
-- Be conservative.
-- Do not invent facts.
-- Do not invent sources.
-- Do not invent URLs.
-- Do not invent statistics.
-- Do not invent quotations.
-- Do not invent dates.
-- Do not assume a source is correct simply because it appears first.
-- Compare the supplied sources.
-- If sources disagree, explain the disagreement.
-- If evidence is insufficient, use "Unclear".
-- "Not proven" does NOT automatically mean "Likely false".
+If sources disagree, explain the disagreement.
 
-Allowed verdict values:
+If the evidence is insufficient, use "Unclear".
 
-Likely true
-Likely false
-Misleading
-Unclear
+"Not proven" does not automatically mean "Likely false".
 
-Allowed confidence values:
+Allowed verdicts:
+- Likely true
+- Likely false
+- Misleading
+- Unclear
 
-High
-Medium
-Low
+Allowed confidence:
+- High
+- Medium
+- Low
 
-Return ONLY ONE JSON OBJECT.
+Return ONLY valid JSON.
 
-Do NOT write:
-- "User Safety: safe"
-- an introduction
-- markdown
-- code fences
-- explanations before the JSON
-- explanations after the JSON
-- extra fields
-
-Use exactly this structure:
+The JSON must contain exactly:
 
 {
   "verdict": "Likely true",
@@ -445,12 +435,13 @@ Use exactly this structure:
 }
 
 Requirements:
-
 - reasoning: 2 to 4 items
 - evidenceToCheck: 2 to 4 items
 - summary: concise
 - context: concise
-- JSON only
+- no markdown
+- no code fences
+- no additional fields
 
 CLAIM:
 ${claim}
@@ -528,24 +519,30 @@ async function callOpenRouter(
   }
 
   console.log(
-    `OPENROUTER_REQUEST: ${model}`
+    `OPENROUTER_REQUEST_START: ${model}`
   );
 
-  const response =
-    await fetch(
+  let response: Response;
+
+  try {
+    response = await fetch(
       OPENROUTER_URL,
       {
         method: "POST",
+
         headers: {
           Authorization:
             `Bearer ${apiKey}`,
           "Content-Type":
             "application/json",
+
           "HTTP-Referer":
-            "https://truth-checker-eight.vercel.app",
+            "https://truth-checker-app.vercel.app",
+
           "X-Title":
             "Truth Checker",
         },
+
         body: JSON.stringify({
           model,
 
@@ -553,7 +550,7 @@ async function callOpenRouter(
             {
               role: "system",
               content:
-                "Return only the requested JSON object. Never output safety classifications, commentary, markdown, or any text outside the JSON object.",
+                "Return only the JSON object requested by the user. Do not include markdown or additional text.",
             },
             {
               role: "user",
@@ -561,6 +558,10 @@ async function callOpenRouter(
             },
           ],
 
+          /*
+           * gpt-oss-20b supports JSON schema structured
+           * output on OpenRouter.
+           */
           response_format: {
             type: "json_schema",
             json_schema: {
@@ -574,23 +575,9 @@ async function callOpenRouter(
 
           temperature: 0,
 
-          /*
-           * Keep the response deliberately small.
-           * Free models are more reliable when they have
-           * a simple, bounded output.
-           */
-          max_tokens: 500,
+          max_tokens: 700,
 
           stream: false,
-
-          /*
-           * Do not request reasoning.
-           * We need only the final structured answer.
-           */
-          reasoning: {
-            effort: "none",
-            exclude: true,
-          },
         }),
 
         cache: "no-store",
@@ -601,14 +588,52 @@ async function callOpenRouter(
           ),
       }
     );
+  } catch (error) {
+    console.error(
+      "OPENROUTER_NETWORK_ERROR:",
+      error
+    );
+
+    if (
+      error instanceof Error &&
+      error.name === "TimeoutError"
+    ) {
+      const timeoutError =
+        new Error(
+          "OpenRouter took too long to respond."
+        );
+
+      (
+        timeoutError as Error & {
+          status?: number;
+        }
+      ).status = 504;
+
+      throw timeoutError;
+    }
+
+    throw new Error(
+      "Could not reach OpenRouter."
+    );
+  }
 
   const rawText =
     await response.text();
 
+  /*
+   * IMPORTANT:
+   * Keep the actual provider response in the
+   * Vercel logs. This makes future debugging
+   * much easier.
+   */
   if (!response.ok) {
     console.error(
-      `OPENROUTER_HTTP_ERROR: ${model} ${response.status}`,
-      rawText.slice(0, 3000)
+      "OPENROUTER_HTTP_ERROR:",
+      JSON.stringify({
+        model,
+        status: response.status,
+        body: rawText.slice(0, 5000),
+      })
     );
 
     const error =
@@ -632,8 +657,8 @@ async function callOpenRouter(
       JSON.parse(rawText) as OpenRouterResponse;
   } catch (error) {
     console.error(
-      "OPENROUTER_INVALID_HTTP_JSON:",
-      error
+      "OPENROUTER_INVALID_JSON:",
+      rawText.slice(0, 5000)
     );
 
     throw new Error(
@@ -643,14 +668,16 @@ async function callOpenRouter(
 
   if (data.error) {
     const message =
-      typeof data.error.message ===
-      "string"
+      typeof data.error.message === "string"
         ? data.error.message
-        : "OpenRouter returned an error.";
+        : "OpenRouter returned an API error.";
 
     console.error(
       "OPENROUTER_API_ERROR:",
-      message
+      JSON.stringify({
+        code: data.error.code,
+        message,
+      })
     );
 
     throw new Error(message);
@@ -660,19 +687,24 @@ async function callOpenRouter(
     data.choices?.[0];
 
   if (!choice) {
+    console.error(
+      "OPENROUTER_NO_CHOICE:",
+      rawText.slice(0, 5000)
+    );
+
     throw new Error(
       "OpenRouter returned no model response."
     );
   }
 
   const content =
-    typeof choice.message
-      ?.content === "string"
+    typeof choice.message?.content ===
+    "string"
       ? choice.message.content.trim()
       : "";
 
   console.log(
-    "OPENROUTER_SUCCESS:",
+    "OPENROUTER_RESPONSE:",
     JSON.stringify({
       model: data.model,
       finishReason:
@@ -688,22 +720,13 @@ async function callOpenRouter(
     );
   }
 
-  /*
-   * IMPORTANT:
-   *
-   * Even when response_format is requested,
-   * free models can occasionally return malformed
-   * or decorated output.
-   *
-   * We therefore extract the JSON ourselves.
-   */
   const jsonText =
     extractJsonObject(content);
 
   if (!jsonText) {
     console.error(
-      "OPENROUTER_NO_JSON_OBJECT:",
-      content.slice(0, 4000)
+      "OPENROUTER_NO_JSON:",
+      content.slice(0, 5000)
     );
 
     throw new Error(
@@ -718,13 +741,13 @@ async function callOpenRouter(
       JSON.parse(jsonText);
   } catch (error) {
     console.error(
-      "OPENROUTER_PARSE_ERROR:",
+      "OPENROUTER_JSON_PARSE_ERROR:",
       error
     );
 
     console.error(
       "OPENROUTER_CONTENT:",
-      content.slice(0, 4000)
+      content.slice(0, 5000)
     );
 
     throw new Error(
@@ -733,15 +756,14 @@ async function callOpenRouter(
   }
 
   if (
-    !isValidInvestigation(
-      parsed
-    )
+    !isValidInvestigation(parsed)
   ) {
     console.error(
       "OPENROUTER_INVALID_INVESTIGATION:",
-      JSON.stringify(
-        parsed
-      ).slice(0, 4000)
+      JSON.stringify(parsed).slice(
+        0,
+        5000
+      )
     );
 
     throw new Error(
@@ -786,7 +808,7 @@ async function analyzeWithOpenRouter(
     );
 
   /*
-   * Try the predictable free model first.
+   * Primary model.
    */
   try {
     return await callOpenRouter(
@@ -799,15 +821,21 @@ async function analyzeWithOpenRouter(
 
     console.error(
       "OPENROUTER_PRIMARY_FAILED:",
-      status,
-      error
+      JSON.stringify({
+        status,
+        message:
+          error instanceof Error
+            ? error.message
+            : String(error),
+      })
     );
 
     /*
-     * Only fall back for temporary/provider problems.
+     * Do NOT hide authentication/configuration
+     * errors or 404 errors.
      *
-     * We do not want to hide configuration/authentication
-     * problems by repeatedly retrying them.
+     * Only temporary availability/rate-limit
+     * problems should trigger the fallback.
      */
     const shouldFallback =
       status === 429 ||
@@ -815,14 +843,10 @@ async function analyzeWithOpenRouter(
       status === 502 ||
       status === 503 ||
       status === 504 ||
-      error instanceof Error &&
-        (
-          error.name ===
-            "TimeoutError" ||
-          error.message.includes(
-            "temporarily"
-          )
-        );
+      (
+        error instanceof Error &&
+        error.name === "TimeoutError"
+      );
 
     if (!shouldFallback) {
       throw error;
@@ -830,10 +854,7 @@ async function analyzeWithOpenRouter(
   }
 
   /*
-   * Fallback to OpenRouter's free router.
-   *
-   * This may choose different free models depending on
-   * current availability.
+   * Free router fallback.
    */
   try {
     return await callOpenRouter(
@@ -841,17 +862,21 @@ async function analyzeWithOpenRouter(
       prompt
     );
   } catch (error) {
-    console.error(
-      "OPENROUTER_FALLBACK_FAILED:",
-      error
-    );
-
     const status =
       getErrorStatus(error);
 
-    if (
-      status === 429
-    ) {
+    console.error(
+      "OPENROUTER_FALLBACK_FAILED:",
+      JSON.stringify({
+        status,
+        message:
+          error instanceof Error
+            ? error.message
+            : String(error),
+      })
+    );
+
+    if (status === 429) {
       const rateLimitError =
         new Error(
           "The free OpenRouter models are temporarily rate-limited. Please try again shortly."
@@ -866,13 +891,10 @@ async function analyzeWithOpenRouter(
       throw rateLimitError;
     }
 
-    if (
-      error instanceof Error &&
-      error.name === "TimeoutError"
-    ) {
+    if (status === 504) {
       const timeoutError =
         new Error(
-          "The free AI provider took too long to respond. Please try again shortly."
+          "The AI provider took too long to respond. Please try again shortly."
         );
 
       (
@@ -971,10 +993,13 @@ export async function POST(
     }
 
     console.log(
-      "TRUTH_CHECKER_START:",
-      claim
+      "TRUTH_CHECKER_START"
     );
 
+    /*
+     * Step 1:
+     * Search the web.
+     */
     console.log(
       "TRUTH_CHECKER_SEARCHING"
     );
@@ -1003,6 +1028,10 @@ export async function POST(
       );
     }
 
+    /*
+     * Step 2:
+     * Analyze the evidence with OpenRouter.
+     */
     console.log(
       "TRUTH_CHECKER_ANALYZING"
     );
@@ -1039,9 +1068,7 @@ export async function POST(
     const status =
       getErrorStatus(error);
 
-    if (
-      status === 429
-    ) {
+    if (status === 429) {
       return NextResponse.json(
         {
           success: false,
@@ -1053,9 +1080,7 @@ export async function POST(
       );
     }
 
-    if (
-      status === 504
-    ) {
+    if (status === 504) {
       return NextResponse.json(
         {
           success: false,
