@@ -7,11 +7,7 @@ type EvidenceSource = {
 };
 
 type Investigation = {
-  verdict:
-    | "Likely true"
-    | "Likely false"
-    | "Misleading"
-    | "Unclear";
+  verdict: "Likely true" | "Likely false" | "Misleading" | "Unclear";
   confidence: "High" | "Medium" | "Low";
   summary: string;
   reasoning: string[];
@@ -29,21 +25,15 @@ type TavilyResponse = {
   results?: TavilyResult[];
 };
 
-type OpenRouterMessage = {
-  content?: unknown;
-  reasoning?: unknown;
-};
-
 type OpenRouterResponse = {
-  id?: unknown;
-  model?: unknown;
   choices?: Array<{
-    finish_reason?: unknown;
-    message?: OpenRouterMessage;
+    message?: {
+      content?: unknown;
+    };
   }>;
   error?: {
-    code?: unknown;
     message?: unknown;
+    code?: unknown;
   };
 };
 
@@ -54,107 +44,129 @@ const OPENROUTER_URL =
 const MODEL = "google/gemma-4-31b-it:free";
 
 const MAX_CLAIM_LENGTH = 500;
-const MAX_EVIDENCE_SOURCES = 5;
-const MAX_EVIDENCE_CHARS_PER_SOURCE = 5000;
+const MAX_SOURCES = 5;
+const MAX_SNIPPET_LENGTH = 5000;
 const REQUEST_TIMEOUT_MS = 30000;
 
-function createTimeoutSignal(): AbortSignal {
+function timeoutSignal(): AbortSignal {
   return AbortSignal.timeout(REQUEST_TIMEOUT_MS);
 }
 
 function cleanJson(text: string): string {
-  let cleaned = text.trim();
+  let result = text.trim();
 
-  cleaned = cleaned.replace(
-    /^```(?:json)?\s*/i,
-    ""
-  );
+  result = result.replace(/^```json\s*/i, "");
+  result = result.replace(/^```\s*/i, "");
+  result = result.replace(/\s*```$/i, "");
+  result = result.trim();
 
-  cleaned = cleaned.replace(
-    /\s*```$/i,
-    ""
-  );
-
-  const firstBrace = cleaned.indexOf("{");
-  const lastBrace = cleaned.lastIndexOf("}");
+  const firstBrace = result.indexOf("{");
+  const lastBrace = result.lastIndexOf("}");
 
   if (
     firstBrace !== -1 &&
     lastBrace !== -1 &&
     lastBrace > firstBrace
   ) {
-    cleaned = cleaned.slice(
-      firstBrace,
-      lastBrace + 1
-    );
+    result = result.slice(firstBrace, lastBrace + 1);
   }
 
-  return cleaned.trim();
+  return result.trim();
 }
 
 function isValidInvestigation(
   value: unknown
 ): value is Investigation {
-  if (
-    !value ||
-    typeof value !== "object"
-  ) {
+  if (!value || typeof value !== "object") {
     return false;
   }
 
-  const data =
-    value as Record<string, unknown>;
+  const data = value as Record<string, unknown>;
 
-  const validVerdicts = [
+  const verdicts = [
     "Likely true",
     "Likely false",
     "Misleading",
     "Unclear",
   ];
 
-  const validConfidence = [
+  const confidenceLevels = [
     "High",
     "Medium",
     "Low",
   ];
 
-  return (
-    typeof data.verdict === "string" &&
-    validVerdicts.includes(
-      data.verdict
-    ) &&
-    typeof data.confidence === "string" &&
-    validConfidence.includes(
-      data.confidence
-    ) &&
-    typeof data.summary === "string" &&
-    data.summary.trim().length > 0 &&
-    Array.isArray(data.reasoning) &&
-    data.reasoning.length >= 2 &&
-    data.reasoning.length <= 4 &&
-    data.reasoning.every(
-      (item) =>
-        typeof item === "string" &&
-        item.trim().length > 0
-    ) &&
-    typeof data.context === "string" &&
-    data.context.trim().length > 0 &&
-    Array.isArray(data.evidenceToCheck) &&
-    data.evidenceToCheck.length >= 2 &&
-    data.evidenceToCheck.length <= 4 &&
-    data.evidenceToCheck.every(
+  if (
+    typeof data.verdict !== "string" ||
+    !verdicts.includes(data.verdict)
+  ) {
+    return false;
+  }
+
+  if (
+    typeof data.confidence !== "string" ||
+    !confidenceLevels.includes(data.confidence)
+  ) {
+    return false;
+  }
+
+  if (
+    typeof data.summary !== "string" ||
+    data.summary.trim().length === 0
+  ) {
+    return false;
+  }
+
+  if (
+    !Array.isArray(data.reasoning) ||
+    data.reasoning.length < 2 ||
+    data.reasoning.length > 4
+  ) {
+    return false;
+  }
+
+  if (
+    !data.reasoning.every(
       (item) =>
         typeof item === "string" &&
         item.trim().length > 0
     )
-  );
+  ) {
+    return false;
+  }
+
+  if (
+    typeof data.context !== "string" ||
+    data.context.trim().length === 0
+  ) {
+    return false;
+  }
+
+  if (
+    !Array.isArray(data.evidenceToCheck) ||
+    data.evidenceToCheck.length < 2 ||
+    data.evidenceToCheck.length > 4
+  ) {
+    return false;
+  }
+
+  if (
+    !data.evidenceToCheck.every(
+      (item) =>
+        typeof item === "string" &&
+        item.trim().length > 0
+    )
+  ) {
+    return false;
+  }
+
+  return true;
 }
 
 async function searchEvidence(
   claim: string
 ): Promise<EvidenceSource[]> {
-  const apiKey =
-    process.env.TAVILY_API_KEY;
+  const apiKey = process.env.TAVILY_API_KEY?.trim();
 
   if (!apiKey) {
     throw new Error(
@@ -165,28 +177,23 @@ async function searchEvidence(
   let response: Response;
 
   try {
-    response = await fetch(
-      TAVILY_URL,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type":
-            "application/json",
-        },
-        body: JSON.stringify({
-          api_key: apiKey,
-          query: claim,
-          search_depth: "advanced",
-          topic: "general",
-          max_results:
-            MAX_EVIDENCE_SOURCES,
-          include_answer: false,
-          include_raw_content: false,
-        }),
-        cache: "no-store",
-        signal: createTimeoutSignal(),
-      }
-    );
+    response = await fetch(TAVILY_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        api_key: apiKey,
+        query: claim,
+        search_depth: "advanced",
+        topic: "general",
+        max_results: MAX_SOURCES,
+        include_answer: false,
+        include_raw_content: false,
+      }),
+      cache: "no-store",
+      signal: timeoutSignal(),
+    });
   } catch (error) {
     console.error(
       "TAVILY_REQUEST_FAILED:",
@@ -198,14 +205,13 @@ async function searchEvidence(
     );
   }
 
-  if (!response.ok) {
-    const errorText =
-      await response.text();
+  const responseText = await response.text();
 
+  if (!response.ok) {
     console.error(
       "TAVILY_ERROR:",
       response.status,
-      errorText.slice(0, 3000)
+      responseText.slice(0, 3000)
     );
 
     throw new Error(
@@ -216,8 +222,9 @@ async function searchEvidence(
   let data: TavilyResponse;
 
   try {
-    data =
-      (await response.json()) as TavilyResponse;
+    data = JSON.parse(
+      responseText
+    ) as TavilyResponse;
   } catch (error) {
     console.error(
       "TAVILY_INVALID_JSON:",
@@ -229,74 +236,57 @@ async function searchEvidence(
     );
   }
 
-  const sources =
-    (data.results ?? [])
-      .filter(
-        (item) =>
-          typeof item.title ===
-            "string" &&
-          typeof item.url ===
-            "string"
-      )
-      .map((item) => ({
-        title:
-          item.title as string,
-        url:
-          item.url as string,
-        snippet:
-          typeof item.content ===
-          "string"
-            ? item.content
-            : "No summary available.",
-      }))
-      .slice(
-        0,
-        MAX_EVIDENCE_SOURCES
-      );
-
-  return sources;
+  return (data.results ?? [])
+    .filter(
+      (item) =>
+        typeof item.title === "string" &&
+        typeof item.url === "string"
+    )
+    .map((item) => ({
+      title: (item.title as string).trim(),
+      url: (item.url as string).trim(),
+      snippet:
+        typeof item.content === "string"
+          ? item.content
+              .trim()
+              .slice(0, MAX_SNIPPET_LENGTH)
+          : "No summary available.",
+    }))
+    .slice(0, MAX_SOURCES);
 }
 
 function buildEvidenceText(
   evidence: EvidenceSource[]
 ): string {
   return evidence
-    .map((source, index) => {
-      const snippet =
-        source.snippet.slice(
-          0,
-          MAX_EVIDENCE_CHARS_PER_SOURCE
-        );
-
-      return `SOURCE ${index + 1}
+    .map(
+      (source, index) =>
+        `SOURCE ${index + 1}
 
 Title: ${source.title}
 
 URL: ${source.url}
 
 Content:
-${snippet}`;
-    })
+${source.snippet}`
+    )
     .join(
       "\n\n--------------------\n\n"
     );
 }
 
-function buildAnalysisPrompt(
+function buildPrompt(
   claim: string,
   evidence: EvidenceSource[]
 ): string {
-  const evidenceText =
-    buildEvidenceText(evidence);
-
   return `
 You are the evidence-analysis engine for Truth Checker.
 
-Investigate the user's claim using ONLY the supplied web evidence.
+Your task is to evaluate the user's claim using ONLY the supplied web evidence.
 
 Be neutral, conservative, precise, and evidence-first.
 
-IMPORTANT RULES:
+Rules:
 
 1. Never invent sources.
 2. Never invent URLs.
@@ -306,14 +296,15 @@ IMPORTANT RULES:
 6. Never invent organizations.
 7. Never invent dates.
 8. Never use outside knowledge as evidence.
-9. Search results are evidence to evaluate, not automatic truth.
+9. Treat search results as evidence that must be evaluated.
 10. Prefer authoritative sources when they are supplied.
 11. If sources conflict, acknowledge the conflict.
-12. If evidence is insufficient, use "Unclear".
+12. If the evidence is insufficient, use "Unclear".
 13. Do not confuse "not proven" with "false".
 14. Do not treat popularity as proof.
 15. Do not blindly trust one source.
-16. Keep confidence proportional to the quality and agreement of the evidence.
+16. Keep confidence proportional to evidence quality.
+17. Do not claim certainty when the supplied evidence does not justify it.
 
 Allowed verdicts:
 
@@ -328,7 +319,9 @@ Allowed confidence:
 "Medium"
 "Low"
 
-Return exactly this JSON structure:
+Return ONLY one JSON object.
+
+The JSON must contain exactly these fields:
 
 {
   "verdict": "Likely true",
@@ -347,20 +340,20 @@ Return exactly this JSON structure:
 
 Requirements:
 
-- reasoning must contain 2 to 4 useful points.
-- evidenceToCheck must contain 2 to 4 useful items.
-- summary must be concise and understandable.
-- context must be concise but meaningful.
-- Do not mention evidence that was not supplied.
-- Do not invent facts.
-- Do not add extra JSON fields.
-- Return JSON only.
+- reasoning must contain 2 to 4 strings.
+- evidenceToCheck must contain 2 to 4 strings.
+- summary must be concise.
+- context must be meaningful.
+- Do not add extra fields.
+- Do not use Markdown.
+- Do not use code fences.
+- Do not write anything outside the JSON object.
 
 CLAIM:
 ${claim}
 
 WEB EVIDENCE:
-${evidenceText}
+${buildEvidenceText(evidence)}
 `.trim();
 }
 
@@ -369,7 +362,7 @@ async function analyzeWithOpenRouter(
   evidence: EvidenceSource[]
 ): Promise<Investigation> {
   const apiKey =
-    process.env.OPENROUTER_API_KEY;
+    process.env.OPENROUTER_API_KEY?.trim();
 
   if (!apiKey) {
     throw new Error(
@@ -377,65 +370,10 @@ async function analyzeWithOpenRouter(
     );
   }
 
-  const prompt =
-    buildAnalysisPrompt(
-      claim,
-      evidence
-    );
-
-  const responseSchema = {
-    type: "object",
-    properties: {
-      verdict: {
-        type: "string",
-        enum: [
-          "Likely true",
-          "Likely false",
-          "Misleading",
-          "Unclear",
-        ],
-      },
-      confidence: {
-        type: "string",
-        enum: [
-          "High",
-          "Medium",
-          "Low",
-        ],
-      },
-      summary: {
-        type: "string",
-      },
-      reasoning: {
-        type: "array",
-        minItems: 2,
-        maxItems: 4,
-        items: {
-          type: "string",
-        },
-      },
-      context: {
-        type: "string",
-      },
-      evidenceToCheck: {
-        type: "array",
-        minItems: 2,
-        maxItems: 4,
-        items: {
-          type: "string",
-        },
-      },
-    },
-    required: [
-      "verdict",
-      "confidence",
-      "summary",
-      "reasoning",
-      "context",
-      "evidenceToCheck",
-    ],
-    additionalProperties: false,
-  };
+  const prompt = buildPrompt(
+    claim,
+    evidence
+  );
 
   let response: Response;
 
@@ -446,55 +384,30 @@ async function analyzeWithOpenRouter(
         method: "POST",
         headers: {
           Authorization: `Bearer ${apiKey}`,
-          "Content-Type":
-            "application/json",
+          "Content-Type": "application/json",
           "HTTP-Referer":
             "https://truth-checker-eight.vercel.app",
-          "X-Title":
-            "Truth Checker",
+          "X-Title": "Truth Checker",
         },
         body: JSON.stringify({
           model: MODEL,
-
           messages: [
             {
               role: "system",
               content:
-                "You are Truth Checker's evidence-analysis engine. Return only the requested JSON object.",
+                "Return only the requested JSON object. Do not include Markdown or any text outside the JSON.",
             },
             {
               role: "user",
               content: prompt,
             },
           ],
-
-          response_format: {
-            type: "json_schema",
-            json_schema: {
-              name:
-                "truth_checker_investigation",
-              strict: true,
-              schema:
-                responseSchema,
-            },
-          },
-
-          reasoning: {
-            effort: "none",
-            exclude: true,
-          },
-
           temperature: 0.1,
           max_tokens: 700,
           stream: false,
-
-          provider: {
-            allow_fallbacks: true,
-          },
         }),
-
         cache: "no-store",
-        signal: createTimeoutSignal(),
+        signal: timeoutSignal(),
       }
     );
   } catch (error) {
@@ -508,17 +421,14 @@ async function analyzeWithOpenRouter(
     );
   }
 
-  const rawResponseText =
+  const responseText =
     await response.text();
 
   if (!response.ok) {
     console.error(
       "OPENROUTER_ERROR:",
       response.status,
-      rawResponseText.slice(
-        0,
-        5000
-      )
+      responseText.slice(0, 5000)
     );
 
     throw new Error(
@@ -529,22 +439,18 @@ async function analyzeWithOpenRouter(
   let data: OpenRouterResponse;
 
   try {
-    data =
-      JSON.parse(
-        rawResponseText
-      ) as OpenRouterResponse;
+    data = JSON.parse(
+      responseText
+    ) as OpenRouterResponse;
   } catch (error) {
     console.error(
-      "OPENROUTER_INVALID_JSON_RESPONSE:",
+      "OPENROUTER_INVALID_JSON:",
       error
     );
 
     console.error(
-      "OPENROUTER_RAW_HTTP_RESPONSE:",
-      rawResponseText.slice(
-        0,
-        5000
-      )
+      "OPENROUTER_RAW_RESPONSE:",
+      responseText.slice(0, 5000)
     );
 
     throw new Error(
@@ -559,53 +465,22 @@ async function analyzeWithOpenRouter(
     );
 
     throw new Error(
-      typeof data.error.message ===
-        "string"
+      typeof data.error.message === "string"
         ? data.error.message
         : "The cloud AI returned an error."
     );
   }
 
-  const choice =
-    data.choices?.[0];
-
-  if (!choice) {
-    console.error(
-      "OPENROUTER_NO_CHOICE:",
-      JSON.stringify(
-        data
-      ).slice(0, 5000)
-    );
-
-    throw new Error(
-      "The cloud AI returned no choice."
-    );
-  }
-
   const content =
-    typeof choice.message
-      ?.content === "string"
-      ? choice.message.content.trim()
+    typeof data.choices?.[0]?.message?.content ===
+    "string"
+      ? data.choices[0].message.content.trim()
       : "";
-
-  console.log(
-    "OPENROUTER_RESULT:",
-    JSON.stringify({
-      model:
-        data.model,
-      finishReason:
-        choice.finish_reason,
-      hasContent:
-        Boolean(content),
-    })
-  );
 
   if (!content) {
     console.error(
       "OPENROUTER_EMPTY_CONTENT:",
-      JSON.stringify(
-        data
-      ).slice(0, 5000)
+      responseText.slice(0, 5000)
     );
 
     throw new Error(
@@ -613,14 +488,12 @@ async function analyzeWithOpenRouter(
     );
   }
 
-  const cleaned =
-    cleanJson(content);
+  const cleaned = cleanJson(content);
 
   let parsed: unknown;
 
   try {
-    parsed =
-      JSON.parse(cleaned);
+    parsed = JSON.parse(cleaned);
   } catch (error) {
     console.error(
       "OPENROUTER_PARSE_ERROR:",
@@ -629,10 +502,7 @@ async function analyzeWithOpenRouter(
 
     console.error(
       "OPENROUTER_CONTENT:",
-      content.slice(
-        0,
-        5000
-      )
+      content.slice(0, 5000)
     );
 
     throw new Error(
@@ -641,15 +511,14 @@ async function analyzeWithOpenRouter(
   }
 
   if (
-    !isValidInvestigation(
-      parsed
-    )
+    !isValidInvestigation(parsed)
   ) {
     console.error(
       "OPENROUTER_INVALID_RESULT:",
-      JSON.stringify(
-        parsed
-      ).slice(0, 5000)
+      JSON.stringify(parsed).slice(
+        0,
+        5000
+      )
     );
 
     throw new Error(
@@ -671,8 +540,7 @@ export async function POST(
       typeof body === "object" &&
       body !== null &&
       "claim" in body &&
-      typeof body.claim ===
-        "string"
+      typeof body.claim === "string"
         ? body.claim.trim()
         : "";
 
@@ -683,9 +551,7 @@ export async function POST(
           error:
             "Please enter a claim to investigate.",
         },
-        {
-          status: 400,
-        }
+        { status: 400 }
       );
     }
 
@@ -699,24 +565,18 @@ export async function POST(
           error:
             `Claims must be ${MAX_CLAIM_LENGTH} characters or fewer.`,
         },
-        {
-          status: 400,
-        }
+        { status: 400 }
       );
     }
 
-    if (
-      !process.env.TAVILY_API_KEY
-    ) {
+    if (!process.env.TAVILY_API_KEY) {
       return NextResponse.json(
         {
           success: false,
           error:
             "Tavily API key is not configured.",
         },
-        {
-          status: 500,
-        }
+        { status: 500 }
       );
     }
 
@@ -729,9 +589,7 @@ export async function POST(
           error:
             "OpenRouter API key is not configured.",
         },
-        {
-          status: 500,
-        }
+        { status: 500 }
       );
     }
 
@@ -741,35 +599,29 @@ export async function POST(
     );
 
     console.log(
-      "TRUTH_CHECKER_SEARCHING:"
+      "TRUTH_CHECKER_SEARCHING"
     );
 
     const evidence =
-      await searchEvidence(
-        claim
-      );
+      await searchEvidence(claim);
 
     console.log(
       `TRUTH_CHECKER_EVIDENCE_COUNT: ${evidence.length}`
     );
 
-    if (
-      evidence.length === 0
-    ) {
+    if (evidence.length === 0) {
       return NextResponse.json(
         {
           success: false,
           error:
             "No web evidence was found for this claim.",
         },
-        {
-          status: 502,
-        }
+        { status: 502 }
       );
     }
 
     console.log(
-      "TRUTH_CHECKER_ANALYZING:"
+      "TRUTH_CHECKER_ANALYZING"
     );
 
     const investigation =
@@ -796,19 +648,15 @@ export async function POST(
       error
     );
 
-    const message =
-      error instanceof Error
-        ? error.message
-        : "The investigation could not be completed.";
-
     return NextResponse.json(
       {
         success: false,
-        error: message,
+        error:
+          error instanceof Error
+            ? error.message
+            : "The investigation could not be completed.",
       },
-      {
-        status: 500,
-      }
+      { status: 500 }
     );
   }
 }
