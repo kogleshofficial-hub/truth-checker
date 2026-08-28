@@ -30,91 +30,90 @@ type TavilyResponse = {
 };
 
 type OpenRouterResponse = {
+  id?: unknown;
+  model?: unknown;
   choices?: Array<{
+    finish_reason?: unknown;
     message?: {
       content?: unknown;
     };
   }>;
   error?: {
-    message?: unknown;
     code?: unknown;
+    message?: unknown;
     metadata?: unknown;
   };
 };
 
-const TAVILY_URL =
-  "https://api.tavily.com/search";
-
+const TAVILY_URL = "https://api.tavily.com/search";
 const OPENROUTER_URL =
   "https://openrouter.ai/api/v1/chat/completions";
 
 /*
- * Primary model:
- * Free Gemma 4 26B A4B.
+ * OpenRouter's free router automatically selects an available
+ * free model instead of forcing Truth Checker to depend on
+ * one specific provider.
  *
- * Fallback:
- * A second model can be supplied through
- * OPENROUTER_FALLBACK_MODEL.
- *
- * If the fallback variable is not configured,
- * the route will return a clear AI-unavailable
- * response instead of pretending the claim was checked.
+ * This is still subject to OpenRouter/provider free-tier limits.
  */
-const PRIMARY_MODEL =
-  "google/gemma-4-26b-a4b-it:free";
-
-const DEFAULT_FALLBACK_MODEL =
-  "google/gemma-4-26b-a4b-it";
+const MODEL = "openrouter/free";
 
 const MAX_CLAIM_LENGTH = 500;
-const MAX_SOURCES = 5;
-const MAX_SNIPPET_LENGTH = 5000;
-const REQUEST_TIMEOUT_MS = 30000;
+const MAX_EVIDENCE_SOURCES = 5;
+const MAX_EVIDENCE_CHARS_PER_SOURCE = 4500;
 
-function createTimeoutSignal(): AbortSignal {
-  return AbortSignal.timeout(
-    REQUEST_TIMEOUT_MS
-  );
+const TAVILY_TIMEOUT_MS = 20_000;
+const OPENROUTER_TIMEOUT_MS = 30_000;
+
+const OPENROUTER_MAX_ATTEMPTS = 3;
+
+function createTimeoutSignal(
+  milliseconds: number
+): AbortSignal {
+  return AbortSignal.timeout(milliseconds);
 }
 
-function cleanJson(text: string): string {
-  let result = text.trim();
+function sleep(
+  milliseconds: number
+): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, milliseconds);
+  });
+}
 
-  result = result.replace(
-    /^```json\s*/i,
+function cleanJson(
+  text: string
+): string {
+  let cleaned = text.trim();
+
+  cleaned = cleaned.replace(
+    /^```(?:json)?\s*/i,
     ""
   );
 
-  result = result.replace(
-    /^```\s*/i,
-    ""
-  );
-
-  result = result.replace(
+  cleaned = cleaned.replace(
     /\s*```$/i,
     ""
   );
 
-  result = result.trim();
-
   const firstBrace =
-    result.indexOf("{");
+    cleaned.indexOf("{");
 
   const lastBrace =
-    result.lastIndexOf("}");
+    cleaned.lastIndexOf("}");
 
   if (
     firstBrace !== -1 &&
     lastBrace !== -1 &&
     lastBrace > firstBrace
   ) {
-    result = result.slice(
+    cleaned = cleaned.slice(
       firstBrace,
       lastBrace + 1
     );
   }
 
-  return result.trim();
+  return cleaned.trim();
 }
 
 function isValidInvestigation(
@@ -143,90 +142,64 @@ function isValidInvestigation(
     "Low",
   ];
 
-  if (
-    typeof data.verdict !== "string" ||
-    !validVerdicts.includes(
+  const reasoning =
+    data.reasoning;
+
+  const evidenceToCheck =
+    data.evidenceToCheck;
+
+  return (
+    typeof data.verdict === "string" &&
+    validVerdicts.includes(
       data.verdict
-    )
-  ) {
-    return false;
-  }
-
-  if (
-    typeof data.confidence !== "string" ||
-    !validConfidence.includes(
+    ) &&
+    typeof data.confidence ===
+      "string" &&
+    validConfidence.includes(
       data.confidence
-    )
-  ) {
-    return false;
-  }
-
-  if (
-    typeof data.summary !== "string" ||
-    data.summary.trim().length === 0
-  ) {
-    return false;
-  }
-
-  if (
-    !Array.isArray(data.reasoning) ||
-    data.reasoning.length < 2 ||
-    data.reasoning.length > 4
-  ) {
-    return false;
-  }
-
-  if (
-    !data.reasoning.every(
+    ) &&
+    typeof data.summary ===
+      "string" &&
+    data.summary.trim().length > 0 &&
+    Array.isArray(reasoning) &&
+    reasoning.length >= 2 &&
+    reasoning.length <= 4 &&
+    reasoning.every(
+      (item) =>
+        typeof item === "string" &&
+        item.trim().length > 0
+    ) &&
+    typeof data.context ===
+      "string" &&
+    data.context.trim().length > 0 &&
+    Array.isArray(
+      evidenceToCheck
+    ) &&
+    evidenceToCheck.length >= 2 &&
+    evidenceToCheck.length <= 4 &&
+    evidenceToCheck.every(
       (item) =>
         typeof item === "string" &&
         item.trim().length > 0
     )
-  ) {
-    return false;
-  }
-
-  if (
-    typeof data.context !== "string" ||
-    data.context.trim().length === 0
-  ) {
-    return false;
-  }
-
-  if (
-    !Array.isArray(
-      data.evidenceToCheck
-    ) ||
-    data.evidenceToCheck.length < 2 ||
-    data.evidenceToCheck.length > 4
-  ) {
-    return false;
-  }
-
-  if (
-    !data.evidenceToCheck.every(
-      (item) =>
-        typeof item === "string" &&
-        item.trim().length > 0
-    )
-  ) {
-    return false;
-  }
-
-  return true;
+  );
 }
 
 async function searchEvidence(
   claim: string
 ): Promise<EvidenceSource[]> {
   const apiKey =
-    process.env.TAVILY_API_KEY?.trim();
+    process.env.TAVILY_API_KEY;
 
   if (!apiKey) {
     throw new Error(
       "TAVILY_API_KEY is not configured."
     );
   }
+
+  console.log(
+    "TAVILY_SEARCH_START"
+  );
 
   let response: Response;
 
@@ -235,26 +208,25 @@ async function searchEvidence(
       TAVILY_URL,
       {
         method: "POST",
-
         headers: {
           "Content-Type":
             "application/json",
         },
-
         body: JSON.stringify({
           api_key: apiKey,
           query: claim,
           search_depth: "advanced",
           topic: "general",
-          max_results: MAX_SOURCES,
+          max_results:
+            MAX_EVIDENCE_SOURCES,
           include_answer: false,
           include_raw_content: false,
         }),
-
         cache: "no-store",
-
         signal:
-          createTimeoutSignal(),
+          createTimeoutSignal(
+            TAVILY_TIMEOUT_MS
+          ),
       }
     );
   } catch (error) {
@@ -268,14 +240,14 @@ async function searchEvidence(
     );
   }
 
-  const responseText =
+  const rawText =
     await response.text();
 
   if (!response.ok) {
     console.error(
       "TAVILY_ERROR:",
       response.status,
-      responseText.slice(0, 3000)
+      rawText.slice(0, 3000)
     );
 
     throw new Error(
@@ -288,7 +260,7 @@ async function searchEvidence(
   try {
     data =
       JSON.parse(
-        responseText
+        rawText
       ) as TavilyResponse;
   } catch (error) {
     console.error(
@@ -301,54 +273,64 @@ async function searchEvidence(
     );
   }
 
-  return (
-    data.results ?? []
-  )
-    .filter(
-      (item) =>
-        typeof item.title ===
-          "string" &&
-        typeof item.url ===
-          "string"
-    )
-    .map((item) => ({
-      title:
-        (item.title as string)
-          .trim(),
+  const sources =
+    (data.results ?? [])
+      .filter(
+        (item) =>
+          typeof item.title ===
+            "string" &&
+          typeof item.url ===
+            "string"
+      )
+      .map(
+        (item): EvidenceSource => ({
+          title:
+            item.title as string,
 
-      url:
-        (item.url as string)
-          .trim(),
+          url:
+            item.url as string,
 
-      snippet:
-        typeof item.content ===
-        "string"
-          ? item.content
-              .trim()
-              .slice(
-                0,
-                MAX_SNIPPET_LENGTH
-              )
-          : "No summary available.",
-    }))
-    .slice(0, MAX_SOURCES);
+          snippet:
+            typeof item.content ===
+            "string"
+              ? item.content
+              : "No summary available.",
+        })
+      )
+      .slice(
+        0,
+        MAX_EVIDENCE_SOURCES
+      );
+
+  console.log(
+    `TAVILY_SEARCH_COMPLETE: ${sources.length} sources`
+  );
+
+  return sources;
 }
 
 function buildEvidenceText(
   evidence: EvidenceSource[]
 ): string {
   return evidence
-    .map(
-      (source, index) =>
-        `SOURCE ${index + 1}
+    .map((source, index) => {
+      const snippet =
+        source.snippet.slice(
+          0,
+          MAX_EVIDENCE_CHARS_PER_SOURCE
+        );
 
-Title: ${source.title}
-
-URL: ${source.url}
-
-Content:
-${source.snippet}`
-    )
+      return [
+        `SOURCE ${index + 1}`,
+        "",
+        `Title: ${source.title}`,
+        "",
+        `URL: ${source.url}`,
+        "",
+        "Content:",
+        snippet,
+      ].join("\n");
+    })
     .join(
       "\n\n--------------------\n\n"
     );
@@ -358,96 +340,156 @@ function buildAnalysisPrompt(
   claim: string,
   evidence: EvidenceSource[]
 ): string {
-  return `
-You are the evidence-analysis engine for Truth Checker.
+  const evidenceText =
+    buildEvidenceText(
+      evidence
+    );
 
-Evaluate the user's claim using ONLY the supplied web evidence.
-
-Be neutral, conservative, precise, and evidence-first.
-
-RULES:
-
-1. Never invent sources.
-2. Never invent URLs.
-3. Never invent studies.
-4. Never invent statistics.
-5. Never invent quotations.
-6. Never invent organizations.
-7. Never invent dates.
-8. Never use outside knowledge as evidence.
-9. Treat search results as evidence that must be evaluated.
-10. Prefer authoritative sources when supplied.
-11. If sources conflict, acknowledge the conflict.
-12. If evidence is insufficient, use "Unclear".
-13. Do not confuse "not proven" with "false".
-14. Do not treat popularity as proof.
-15. Do not blindly trust one source.
-16. Keep confidence proportional to evidence quality.
-
-Allowed verdicts:
-
-"Likely true"
-"Likely false"
-"Misleading"
-"Unclear"
-
-Allowed confidence:
-
-"High"
-"Medium"
-"Low"
-
-Return ONLY a JSON object.
-
-Use exactly these fields:
-
-{
-  "verdict": "Likely true",
-  "confidence": "High",
-  "summary": "Short explanation.",
-  "reasoning": [
-    "Reason one.",
-    "Reason two."
-  ],
-  "context": "Important nuance.",
-  "evidenceToCheck": [
-    "Useful evidence category one.",
-    "Useful evidence category two."
-  ]
+  return [
+    "You are the evidence-analysis engine for Truth Checker.",
+    "",
+    "Investigate the user's claim using ONLY the supplied web evidence.",
+    "",
+    "Be neutral, conservative, precise, and evidence-first.",
+    "",
+    "IMPORTANT RULES:",
+    "",
+    "1. Never invent sources.",
+    "2. Never invent URLs.",
+    "3. Never invent studies.",
+    "4. Never invent statistics.",
+    "5. Never invent quotations.",
+    "6. Never invent organizations.",
+    "7. Never invent dates.",
+    "8. Never use outside knowledge as evidence.",
+    "9. Treat search results as evidence to evaluate, not automatic truth.",
+    "10. Prefer authoritative sources when they are supplied.",
+    "11. If sources conflict, acknowledge the conflict.",
+    "12. If evidence is insufficient, use Unclear.",
+    "13. Do not confuse not proven with false.",
+    "14. Do not treat popularity as proof.",
+    "15. Do not blindly trust one source.",
+    "16. Keep the verdict proportional to the evidence.",
+    "",
+    "Allowed verdicts:",
+    '- "Likely true"',
+    '- "Likely false"',
+    '- "Misleading"',
+    '- "Unclear"',
+    "",
+    "Allowed confidence:",
+    '- "High"',
+    '- "Medium"',
+    '- "Low"',
+    "",
+    "Requirements:",
+    "- reasoning must contain 2 to 4 useful points.",
+    "- evidenceToCheck must contain 2 to 4 useful items.",
+    "- summary must be concise and understandable.",
+    "- context must be concise but meaningful.",
+    "- Do not mention evidence that was not supplied.",
+    "- Do not invent facts.",
+    "- Return only the requested JSON object.",
+    "",
+    "CLAIM:",
+    claim,
+    "",
+    "WEB EVIDENCE:",
+    evidenceText,
+  ].join("\n");
 }
 
-Requirements:
+const investigationSchema = {
+  type: "object",
+  properties: {
+    verdict: {
+      type: "string",
+      enum: [
+        "Likely true",
+        "Likely false",
+        "Misleading",
+        "Unclear",
+      ],
+    },
 
-- reasoning: 2 to 4 strings
-- evidenceToCheck: 2 to 4 strings
-- summary: concise
-- context: meaningful
-- no extra fields
-- no Markdown
-- no code fences
-- no text outside the JSON object
+    confidence: {
+      type: "string",
+      enum: [
+        "High",
+        "Medium",
+        "Low",
+      ],
+    },
 
-CLAIM:
-${claim}
+    summary: {
+      type: "string",
+    },
 
-WEB EVIDENCE:
-${buildEvidenceText(evidence)}
-`.trim();
+    reasoning: {
+      type: "array",
+      minItems: 2,
+      maxItems: 4,
+      items: {
+        type: "string",
+      },
+    },
+
+    context: {
+      type: "string",
+    },
+
+    evidenceToCheck: {
+      type: "array",
+      minItems: 2,
+      maxItems: 4,
+      items: {
+        type: "string",
+      },
+    },
+  },
+
+  required: [
+    "verdict",
+    "confidence",
+    "summary",
+    "reasoning",
+    "context",
+    "evidenceToCheck",
+  ],
+
+  additionalProperties: false,
+};
+
+function getOpenRouterErrorMessage(
+  data: OpenRouterResponse
+): string {
+  const message =
+    data.error?.message;
+
+  if (
+    typeof message === "string" &&
+    message.trim()
+  ) {
+    return message.trim();
+  }
+
+  return "The cloud AI returned an error.";
 }
 
 async function requestOpenRouter(
-  model: string,
+  apiKey: string,
   prompt: string,
-  apiKey: string
-): Promise<Investigation> {
+  attempt: number
+): Promise<{
+  response: Response;
+  rawText: string;
+}> {
   console.log(
-    `OPENROUTER_ATTEMPT: ${model}`
+    `OPENROUTER_ATTEMPT: ${attempt}/${OPENROUTER_MAX_ATTEMPTS} using ${MODEL}`
   );
 
-  let response: Response;
-
-  try {
-    response = await fetch(
+  const response =
+    await fetch(
       OPENROUTER_URL,
       {
         method: "POST",
@@ -458,167 +500,77 @@ async function requestOpenRouter(
 
           "Content-Type":
             "application/json",
+
+          "HTTP-Referer":
+            "https://truth-checker-eight.vercel.app",
+
+          "X-Title":
+            "Truth Checker",
         },
 
         body: JSON.stringify({
-          model,
+          model: MODEL,
 
           messages: [
             {
               role: "system",
               content:
-                "Return only the requested JSON object. Do not include Markdown or text outside the JSON.",
+                [
+                  "You are Truth Checker's evidence-analysis engine.",
+                  "Analyze only the supplied evidence.",
+                  "Return only the requested JSON object.",
+                  "Do not include Markdown.",
+                  "Do not include explanations outside the JSON.",
+                ].join(" "),
             },
+
             {
               role: "user",
               content: prompt,
             },
           ],
 
+          response_format: {
+            type: "json_schema",
+
+            json_schema: {
+              name:
+                "truth_checker_investigation",
+
+              strict: true,
+
+              schema:
+                investigationSchema,
+            },
+          },
+
           temperature: 0.1,
 
           max_tokens: 700,
 
           stream: false,
+
+          provider: {
+            allow_fallbacks: true,
+          },
         }),
 
         cache: "no-store",
 
         signal:
-          createTimeoutSignal(),
+          createTimeoutSignal(
+            OPENROUTER_TIMEOUT_MS
+          ),
       }
     );
-  } catch (error) {
-    console.error(
-      "OPENROUTER_REQUEST_FAILED:",
-      error
-    );
 
-    throw new Error(
-      "The cloud AI could not be reached."
-    );
-  }
-
-  const responseText =
+  const rawText =
     await response.text();
 
-  if (!response.ok) {
-    console.error(
-      "OPENROUTER_ERROR:",
-      model,
-      response.status,
-      responseText.slice(0, 5000)
-    );
-
-    const error = new Error(
-      `OpenRouter request failed (${response.status}).`
-    );
-
-    (
-      error as Error & {
-        status?: number;
-      }
-    ).status =
-      response.status;
-
-    throw error;
-  }
-
-  let data: OpenRouterResponse;
-
-  try {
-    data =
-      JSON.parse(
-        responseText
-      ) as OpenRouterResponse;
-  } catch (error) {
-    console.error(
-      "OPENROUTER_INVALID_RESPONSE:",
-      error
-    );
-
-    throw new Error(
-      "The cloud AI returned an invalid response."
-    );
-  }
-
-  if (data.error) {
-    const message =
-      typeof data.error.message ===
-      "string"
-        ? data.error.message
-        : "The cloud AI returned an error.";
-
-    console.error(
-      "OPENROUTER_RESPONSE_ERROR:",
-      model,
-      data.error
-    );
-
-    throw new Error(message);
-  }
-
-  const content =
-    typeof data
-      .choices?.[0]
-      ?.message?.content ===
-    "string"
-      ? data.choices[0].message.content.trim()
-      : "";
-
-  if (!content) {
-    console.error(
-      "OPENROUTER_EMPTY_CONTENT:",
-      responseText.slice(0, 5000)
-    );
-
-    throw new Error(
-      "The cloud AI returned no analysis."
-    );
-  }
-
-  const cleaned =
-    cleanJson(content);
-
-  let parsed: unknown;
-
-  try {
-    parsed =
-      JSON.parse(cleaned);
-  } catch (error) {
-    console.error(
-      "OPENROUTER_PARSE_ERROR:",
-      error
-    );
-
-    console.error(
-      "OPENROUTER_CONTENT:",
-      content.slice(0, 5000)
-    );
-
-    throw new Error(
-      "The cloud AI returned invalid JSON."
-    );
-  }
-
-  if (
-    !isValidInvestigation(
-      parsed
-    )
-  ) {
-    console.error(
-      "OPENROUTER_INVALID_RESULT:",
-      JSON.stringify(
-        parsed
-      ).slice(0, 5000)
-    );
-
-    throw new Error(
-      "The cloud AI returned an incomplete investigation."
-    );
-  }
-
-  return parsed;
+  return {
+    response,
+    rawText,
+  };
 }
 
 async function analyzeWithOpenRouter(
@@ -626,7 +578,7 @@ async function analyzeWithOpenRouter(
   evidence: EvidenceSource[]
 ): Promise<Investigation> {
   const apiKey =
-    process.env.OPENROUTER_API_KEY?.trim();
+    process.env.OPENROUTER_API_KEY;
 
   if (!apiKey) {
     throw new Error(
@@ -640,72 +592,280 @@ async function analyzeWithOpenRouter(
       evidence
     );
 
-  /*
-   * Primary free model.
-   */
-  try {
-    return await requestOpenRouter(
-      PRIMARY_MODEL,
-      prompt,
-      apiKey
-    );
-  } catch (primaryError) {
-    const primaryStatus =
-      (
-        primaryError as Error & {
-          status?: number;
-        }
-      ).status;
+  let lastStatus: number | null =
+    null;
 
-    console.error(
-      "OPENROUTER_PRIMARY_FAILED:",
-      primaryStatus,
-      primaryError
-    );
+  let lastErrorMessage =
+    "The cloud AI could not complete the investigation.";
 
-    /*
-     * Retry using a normal paid model only if
-     * the user has explicitly configured one.
-     *
-     * We do NOT silently spend money.
-     */
-    const fallbackModel =
-      process.env.OPENROUTER_FALLBACK_MODEL?.trim();
-
-    if (!fallbackModel) {
-      throw new Error(
-        primaryStatus === 429
-          ? "The free AI model is temporarily rate-limited. Please try again shortly."
-          : "The AI analysis could not be completed."
-      );
-    }
-
-    /*
-     * Never fall back to a model that could
-     * unexpectedly spend money unless the user
-     * explicitly configured it.
-     */
-    console.log(
-      `OPENROUTER_FALLBACK_ATTEMPT: ${fallbackModel}`
-    );
-
+  for (
+    let attempt = 1;
+    attempt <=
+    OPENROUTER_MAX_ATTEMPTS;
+    attempt++
+  ) {
     try {
-      return await requestOpenRouter(
-        fallbackModel,
-        prompt,
-        apiKey
-      );
-    } catch (fallbackError) {
-      console.error(
-        "OPENROUTER_FALLBACK_FAILED:",
-        fallbackError
+      const {
+        response,
+        rawText,
+      } =
+        await requestOpenRouter(
+          apiKey,
+          prompt,
+          attempt
+        );
+
+      lastStatus =
+        response.status;
+
+      if (
+        response.status === 429
+      ) {
+        console.warn(
+          `OPENROUTER_RATE_LIMITED: attempt ${attempt}`
+        );
+
+        lastErrorMessage =
+          "The free AI model pool is temporarily busy.";
+
+        if (
+          attempt <
+          OPENROUTER_MAX_ATTEMPTS
+        ) {
+          const delay =
+            attempt * 1500;
+
+          console.log(
+            `OPENROUTER_RETRY_WAIT: ${delay}ms`
+          );
+
+          await sleep(delay);
+
+          continue;
+        }
+
+        throw new Error(
+          "The free AI model pool is temporarily rate-limited. Please try again shortly."
+        );
+      }
+
+      if (!response.ok) {
+        let errorData:
+          OpenRouterResponse =
+          {};
+
+        try {
+          errorData =
+            JSON.parse(
+              rawText
+            ) as OpenRouterResponse;
+        } catch {
+          // Keep the raw response for logging below.
+        }
+
+        const providerMessage =
+          getOpenRouterErrorMessage(
+            errorData
+          );
+
+        console.error(
+          "OPENROUTER_ERROR:",
+          response.status,
+          rawText.slice(
+            0,
+            5000
+          )
+        );
+
+        lastErrorMessage =
+          providerMessage;
+
+        if (
+          response.status >= 500 &&
+          attempt <
+            OPENROUTER_MAX_ATTEMPTS
+        ) {
+          await sleep(
+            attempt * 1000
+          );
+
+          continue;
+        }
+
+        throw new Error(
+          `The cloud AI request failed (${response.status}).`
+        );
+      }
+
+      let data:
+        OpenRouterResponse;
+
+      try {
+        data =
+          JSON.parse(
+            rawText
+          ) as OpenRouterResponse;
+      } catch (error) {
+        console.error(
+          "OPENROUTER_INVALID_JSON:",
+          error
+        );
+
+        console.error(
+          "OPENROUTER_RAW_RESPONSE:",
+          rawText.slice(
+            0,
+            5000
+          )
+        );
+
+        throw new Error(
+          "The cloud AI returned an invalid response."
+        );
+      }
+
+      if (data.error) {
+        const message =
+          getOpenRouterErrorMessage(
+            data
+          );
+
+        console.error(
+          "OPENROUTER_RESPONSE_ERROR:",
+          data.error
+        );
+
+        throw new Error(
+          message
+        );
+      }
+
+      const choice =
+        data.choices?.[0];
+
+      if (!choice) {
+        console.error(
+          "OPENROUTER_NO_CHOICE:",
+          JSON.stringify(
+            data
+          ).slice(
+            0,
+            5000
+          )
+        );
+
+        throw new Error(
+          "The cloud AI returned no result."
+        );
+      }
+
+      const content =
+        typeof choice.message
+          ?.content === "string"
+          ? choice.message.content.trim()
+          : "";
+
+      console.log(
+        "OPENROUTER_SUCCESS:",
+        JSON.stringify({
+          model:
+            data.model ??
+            MODEL,
+          finishReason:
+            choice.finish_reason ??
+            null,
+          hasContent:
+            Boolean(content),
+        })
       );
 
-      throw new Error(
-        "All configured AI analysis models are currently unavailable. Please try again shortly."
+      if (!content) {
+        throw new Error(
+          "The cloud AI returned no analysis."
+        );
+      }
+
+      const cleaned =
+        cleanJson(content);
+
+      let parsed: unknown;
+
+      try {
+        parsed =
+          JSON.parse(cleaned);
+      } catch (error) {
+        console.error(
+          "OPENROUTER_PARSE_ERROR:",
+          error
+        );
+
+        console.error(
+          "OPENROUTER_CONTENT:",
+          content.slice(
+            0,
+            5000
+          )
+        );
+
+        throw new Error(
+          "The cloud AI returned invalid JSON."
+        );
+      }
+
+      if (
+        !isValidInvestigation(
+          parsed
+        )
+      ) {
+        console.error(
+          "OPENROUTER_INVALID_RESULT:",
+          JSON.stringify(
+            parsed
+          ).slice(
+            0,
+            5000
+          )
+        );
+
+        throw new Error(
+          "The cloud AI returned an incomplete investigation."
+        );
+      }
+
+      return parsed;
+    } catch (error) {
+      if (
+        error instanceof Error
+      ) {
+        lastErrorMessage =
+          error.message;
+      }
+
+      console.error(
+        "OPENROUTER_ATTEMPT_FAILED:",
+        attempt,
+        error
       );
+
+      if (
+        attempt <
+          OPENROUTER_MAX_ATTEMPTS &&
+        lastStatus !== 429
+      ) {
+        await sleep(
+          attempt * 1000
+        );
+
+        continue;
+      }
+
+      throw error;
     }
   }
+
+  throw new Error(
+    lastErrorMessage
+  );
 }
 
 export async function POST(
@@ -719,7 +879,8 @@ export async function POST(
       typeof body === "object" &&
       body !== null &&
       "claim" in body &&
-      typeof body.claim === "string"
+      typeof body.claim ===
+        "string"
         ? body.claim.trim()
         : "";
 
@@ -796,10 +957,6 @@ export async function POST(
         claim
       );
 
-    console.log(
-      `TRUTH_CHECKER_EVIDENCE_COUNT: ${evidence.length}`
-    );
-
     if (
       evidence.length === 0
     ) {
@@ -816,14 +973,60 @@ export async function POST(
     }
 
     console.log(
+      `TRUTH_CHECKER_EVIDENCE_COUNT: ${evidence.length}`
+    );
+
+    console.log(
       "TRUTH_CHECKER_ANALYZING"
     );
 
-    const investigation =
-      await analyzeWithOpenRouter(
-        claim,
-        evidence
+    let investigation:
+      Investigation;
+
+    try {
+      investigation =
+        await analyzeWithOpenRouter(
+          claim,
+          evidence
+        );
+    } catch (error) {
+      console.error(
+        "TRUTH_CHECKER_AI_ERROR:",
+        error
       );
+
+      const message =
+        error instanceof Error
+          ? error.message
+          : "The AI investigation could not be completed.";
+
+      const isRateLimited =
+        message
+          .toLowerCase()
+          .includes(
+            "rate-limit"
+          ) ||
+        message
+          .toLowerCase()
+          .includes(
+            "temporarily rate"
+          );
+
+      return NextResponse.json(
+        {
+          success: false,
+          error: message,
+          retryable:
+            isRateLimited,
+        },
+        {
+          status:
+            isRateLimited
+              ? 429
+              : 502,
+        }
+      );
+    }
 
     console.log(
       "TRUTH_CHECKER_COMPLETE:",
@@ -831,12 +1034,17 @@ export async function POST(
       investigation.confidence
     );
 
-    return NextResponse.json({
-      success: true,
-      claim,
-      investigation,
-      evidence,
-    });
+    return NextResponse.json(
+      {
+        success: true,
+        claim,
+        investigation,
+        evidence,
+      },
+      {
+        status: 200,
+      }
+    );
   } catch (error) {
     console.error(
       "TRUTH_CHECKER_API_ERROR:",
@@ -848,49 +1056,10 @@ export async function POST(
         ? error.message
         : "The investigation could not be completed.";
 
-    /*
-     * Rate-limit errors are not application
-     * failures. Tell the frontend to retry.
-     */
-    if (
-      message.includes(
-        "temporarily rate-limited"
-      )
-    ) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: message,
-          retryable: true,
-        },
-        {
-          status: 429,
-        }
-      );
-    }
-
-    if (
-      message.includes(
-        "All configured AI analysis models"
-      )
-    ) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: message,
-          retryable: true,
-        },
-        {
-          status: 503,
-        }
-      );
-    }
-
     return NextResponse.json(
       {
         success: false,
         error: message,
-        retryable: false,
       },
       {
         status: 500,
