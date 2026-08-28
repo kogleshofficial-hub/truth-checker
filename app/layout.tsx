@@ -52,7 +52,7 @@ export const metadata: Metadata = {
     locale: "en_US",
   },
   twitter: {
-    card: "summary",
+    card: "summary_large_image",
     title: "Truth Checker — Evidence Before Certainty",
     description:
       "Investigate claims with web evidence and AI analysis. Compare sources, understand the reasoning, and make better-informed decisions.",
