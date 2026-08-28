@@ -105,10 +105,11 @@ npm run dev
 
 Open `http://localhost:3000`.
 
-For a production build:
+For a production validation:
 
 ```bash
 npm run lint
+npm run typecheck
 npm run build
 npm run start
 ```
@@ -120,10 +121,17 @@ Every push to `master` and every pull request targeting `master` runs:
 ```text
 npm ci
 npm run lint
+npm run typecheck
 npm run build
 ```
 
-The workflow currently runs on Node.js 24 with the current GitHub Actions checkout/setup-node releases.
+The workflow runs on Node.js 24 with current GitHub Actions checkout/setup-node releases.
+
+## Reliability and UX
+
+The application includes dedicated loading, error, and not-found states so navigation and unexpected rendering failures do not leave users at a blank or ambiguous screen.
+
+The interface also supports reduced-motion preferences, visible keyboard focus states, responsive layouts, accessible error messaging, source inspection, and a safe fallback when validated AI analysis cannot be completed.
 
 ## SEO and web identity
 
@@ -136,8 +144,10 @@ The project includes:
 - Structured data
 - Web app manifest
 - SVG application icon
+- Favicon
 - Generated Open Graph image
 - Generated Twitter image
+- Mobile/PWA viewport metadata
 - HTTPS deployment
 
 ## Project structure
@@ -147,10 +157,14 @@ truth-checker/
 ├── .github/workflows/ci.yml
 ├── app/
 │   ├── api/check/route.ts
+│   ├── error.tsx
 │   ├── icon.svg
 │   ├── favicon.ico
+│   ├── globals.css
 │   ├── layout.tsx
+│   ├── loading.tsx
 │   ├── manifest.ts
+│   ├── not-found.tsx
 │   ├── opengraph-image.tsx
 │   ├── robots.ts
 │   ├── sitemap.ts
