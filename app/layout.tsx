@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import StructuredData from "./structured-data";
@@ -15,6 +15,11 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+export const viewport: Viewport = {
+  themeColor: "#050608",
+  colorScheme: "dark",
+};
+
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: "Truth Checker — Evidence Before Certainty",
@@ -24,6 +29,9 @@ export const metadata: Metadata = {
   category: "technology",
   creator: "Koglesh R. Murugan",
   publisher: "Koglesh R. Murugan",
+  formatDetection: {
+    telephone: false,
+  },
   alternates: {
     canonical: "/",
   },
@@ -39,8 +47,16 @@ export const metadata: Metadata = {
     },
   },
   icons: {
-    icon: "/icon.svg",
+    icon: [
+      { url: "/icon.svg", type: "image/svg+xml" },
+      { url: "/favicon.ico", type: "image/x-icon" },
+    ],
     shortcut: "/icon.svg",
+  },
+  appleWebApp: {
+    capable: true,
+    title: "Truth Checker",
+    statusBarStyle: "black-translucent",
   },
   openGraph: {
     type: "website",
@@ -68,7 +84,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">
+      <body className="flex min-h-full flex-col">
         <StructuredData />
         {children}
       </body>
