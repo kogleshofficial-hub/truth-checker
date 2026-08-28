@@ -16,6 +16,9 @@ export const metadata: Metadata = {
   title: "Truth Checker — Evidence Before Certainty",
   description:
     "Investigate claims using web evidence and AI analysis, with transparent reasoning and sources to check yourself.",
+  verification: {
+    google: "LI6z3Avdq6RsVP2faZ6nlhcbRwvnMIdjJkrSBygvnZM",
+  },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
