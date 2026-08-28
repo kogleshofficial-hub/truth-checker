@@ -105,12 +105,23 @@ npm run dev
 
 Open `http://localhost:3000`.
 
-For a production validation:
+For a production validation, run the single verification command:
 
 ```bash
+npm run verify
+```
+
+It runs the same three local quality gates used by CI:
+
+```text
 npm run lint
 npm run typecheck
 npm run build
+```
+
+You can also start the production build locally with:
+
+```bash
 npm run start
 ```
 
