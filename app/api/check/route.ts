@@ -48,16 +48,15 @@ const OPENROUTER_URL =
   "https://openrouter.ai/api/v1/chat/completions";
 
 /*
- * OpenRouter currently lists this as a free model.
- * It supports structured JSON output.
+ * OpenRouter free router.
+ *
+ * The router selects an available free model automatically.
+ *
+ * IMPORTANT:
+ * Free API access is rate-limited.
+ * No provider can guarantee unlimited free API usage.
  */
-const PRIMARY_MODEL = "openai/gpt-oss-20b:free";
-
-/*
- * OpenRouter's free router is used only if the primary
- * model is temporarily unavailable or rate-limited.
- */
-const FALLBACK_MODEL = "openrouter/free";
+const PRIMARY_MODEL = "openrouter/free";
 
 const MAX_CLAIM_LENGTH = 500;
 const MAX_EVIDENCE_SOURCES = 5;
@@ -260,10 +259,12 @@ async function searchEvidence(
       TAVILY_URL,
       {
         method: "POST",
+
         headers: {
           "Content-Type":
             "application/json",
         },
+
         body: JSON.stringify({
           api_key: apiKey,
           query: claim,
@@ -274,7 +275,9 @@ async function searchEvidence(
           include_answer: false,
           include_raw_content: false,
         }),
+
         cache: "no-store",
+
         signal:
           createTimeoutSignal(
             TAVILY_TIMEOUT_MS
@@ -333,8 +336,10 @@ async function searchEvidence(
       .map((item) => ({
         title:
           item.title as string,
+
         url:
           item.url as string,
+
         snippet:
           typeof item.content === "string"
             ? item.content
@@ -382,27 +387,48 @@ function buildPrompt(
   return `
 You are the analysis engine for a web evidence checker.
 
-Analyze the CLAIM using ONLY the supplied WEB EVIDENCE.
+Your task is to evaluate the CLAIM using ONLY the supplied WEB EVIDENCE.
 
-Be neutral, conservative, and evidence-based.
+Be neutral, conservative, transparent, and evidence-based.
 
-Do not invent:
+Do NOT invent:
 - facts
 - sources
 - URLs
 - statistics
 - quotations
 - dates
+- information not present in the supplied evidence
 
-Do not use outside knowledge as evidence.
+Do NOT use outside knowledge as evidence.
 
-Compare the supplied sources.
+Compare multiple sources when possible.
 
-If sources disagree, explain the disagreement.
+Pay attention to:
+- source agreement
+- source disagreement
+- publication context
+- dates
+- wording
+- whether a source actually supports the claim
+- whether the claim contains missing context
+- whether the evidence is insufficient
 
-If the evidence is insufficient, use "Unclear".
+If reliable evidence supports the claim, use:
+"Likely true"
 
-"Not proven" does not automatically mean "Likely false".
+If reliable evidence contradicts the claim, use:
+"Likely false"
+
+If the claim contains a mixture of truth and falsehood, missing context, misleading framing, or an important qualification, use:
+"Misleading"
+
+If the supplied evidence is insufficient to make a reasonable determination, use:
+"Unclear"
+
+"Not proven" does NOT automatically mean "Likely false".
+
+Be conservative with confidence.
 
 Allowed verdicts:
 - Likely true
@@ -417,7 +443,7 @@ Allowed confidence:
 
 Return ONLY valid JSON.
 
-The JSON must contain exactly:
+The JSON must contain exactly these fields:
 
 {
   "verdict": "Likely true",
@@ -435,10 +461,13 @@ The JSON must contain exactly:
 }
 
 Requirements:
-- reasoning: 2 to 4 items
-- evidenceToCheck: 2 to 4 items
-- summary: concise
-- context: concise
+
+- reasoning must contain 2 to 4 items
+- evidenceToCheck must contain 2 to 4 items
+- every reasoning item must be a complete useful statement
+- every evidenceToCheck item must identify something useful to verify
+- summary must be concise
+- context must be concise
 - no markdown
 - no code fences
 - no additional fields
@@ -453,9 +482,11 @@ ${buildEvidenceText(evidence)}
 
 const responseSchema = {
   type: "object",
+
   properties: {
     verdict: {
       type: "string",
+
       enum: [
         "Likely true",
         "Likely false",
@@ -463,37 +494,48 @@ const responseSchema = {
         "Unclear",
       ],
     },
+
     confidence: {
       type: "string",
+
       enum: [
         "High",
         "Medium",
         "Low",
       ],
     },
+
     summary: {
       type: "string",
     },
+
     reasoning: {
       type: "array",
+
       items: {
         type: "string",
       },
+
       minItems: 2,
       maxItems: 4,
     },
+
     context: {
       type: "string",
     },
+
     evidenceToCheck: {
       type: "array",
+
       items: {
         type: "string",
       },
+
       minItems: 2,
       maxItems: 4,
     },
   },
+
   required: [
     "verdict",
     "confidence",
@@ -502,11 +544,11 @@ const responseSchema = {
     "context",
     "evidenceToCheck",
   ],
+
   additionalProperties: false,
 };
 
 async function callOpenRouter(
-  model: string,
   prompt: string
 ): Promise<Investigation> {
   const apiKey =
@@ -519,7 +561,7 @@ async function callOpenRouter(
   }
 
   console.log(
-    `OPENROUTER_REQUEST_START: ${model}`
+    `OPENROUTER_REQUEST_START: ${PRIMARY_MODEL}`
   );
 
   let response: Response;
@@ -533,6 +575,7 @@ async function callOpenRouter(
         headers: {
           Authorization:
             `Bearer ${apiKey}`,
+
           "Content-Type":
             "application/json",
 
@@ -544,30 +587,38 @@ async function callOpenRouter(
         },
 
         body: JSON.stringify({
-          model,
+          model:
+            PRIMARY_MODEL,
 
           messages: [
             {
               role: "system",
+
               content:
-                "Return only the JSON object requested by the user. Do not include markdown or additional text.",
+                "Return only the JSON object requested by the user. Do not include markdown, explanations outside the JSON, or additional text.",
             },
+
             {
               role: "user",
-              content: prompt,
+
+              content:
+                prompt,
             },
           ],
 
           /*
-           * gpt-oss-20b supports JSON schema structured
-           * output on OpenRouter.
+           * Ask the selected free model for
+           * structured JSON output.
            */
           response_format: {
             type: "json_schema",
+
             json_schema: {
               name:
                 "truth_checker_investigation",
+
               strict: true,
+
               schema:
                 responseSchema,
             },
@@ -621,18 +672,21 @@ async function callOpenRouter(
     await response.text();
 
   /*
-   * IMPORTANT:
-   * Keep the actual provider response in the
-   * Vercel logs. This makes future debugging
-   * much easier.
+   * Log the provider response for debugging.
+   * Do not expose this information to the browser.
    */
   if (!response.ok) {
     console.error(
       "OPENROUTER_HTTP_ERROR:",
       JSON.stringify({
-        model,
-        status: response.status,
-        body: rawText.slice(0, 5000),
+        model:
+          PRIMARY_MODEL,
+
+        status:
+          response.status,
+
+        body:
+          rawText.slice(0, 5000),
       })
     );
 
@@ -645,7 +699,8 @@ async function callOpenRouter(
       error as Error & {
         status?: number;
       }
-    ).status = response.status;
+    ).status =
+      response.status;
 
     throw error;
   }
@@ -654,7 +709,9 @@ async function callOpenRouter(
 
   try {
     data =
-      JSON.parse(rawText) as OpenRouterResponse;
+      JSON.parse(
+        rawText
+      ) as OpenRouterResponse;
   } catch (error) {
     console.error(
       "OPENROUTER_INVALID_JSON:",
@@ -675,12 +732,16 @@ async function callOpenRouter(
     console.error(
       "OPENROUTER_API_ERROR:",
       JSON.stringify({
-        code: data.error.code,
+        code:
+          data.error.code,
+
         message,
       })
     );
 
-    throw new Error(message);
+    throw new Error(
+      message
+    );
   }
 
   const choice =
@@ -706,9 +767,12 @@ async function callOpenRouter(
   console.log(
     "OPENROUTER_RESPONSE:",
     JSON.stringify({
-      model: data.model,
+      model:
+        data.model,
+
       finishReason:
         choice.finish_reason,
+
       hasContent:
         Boolean(content),
     })
@@ -721,7 +785,9 @@ async function callOpenRouter(
   }
 
   const jsonText =
-    extractJsonObject(content);
+    extractJsonObject(
+      content
+    );
 
   if (!jsonText) {
     console.error(
@@ -738,7 +804,9 @@ async function callOpenRouter(
 
   try {
     parsed =
-      JSON.parse(jsonText);
+      JSON.parse(
+        jsonText
+      );
   } catch (error) {
     console.error(
       "OPENROUTER_JSON_PARSE_ERROR:",
@@ -756,11 +824,15 @@ async function callOpenRouter(
   }
 
   if (
-    !isValidInvestigation(parsed)
+    !isValidInvestigation(
+      parsed
+    )
   ) {
     console.error(
       "OPENROUTER_INVALID_INVESTIGATION:",
-      JSON.stringify(parsed).slice(
+      JSON.stringify(
+        parsed
+      ).slice(
         0,
         5000
       )
@@ -797,119 +869,6 @@ function getErrorStatus(
   return undefined;
 }
 
-async function analyzeWithOpenRouter(
-  claim: string,
-  evidence: EvidenceSource[]
-): Promise<Investigation> {
-  const prompt =
-    buildPrompt(
-      claim,
-      evidence
-    );
-
-  /*
-   * Primary model.
-   */
-  try {
-    return await callOpenRouter(
-      PRIMARY_MODEL,
-      prompt
-    );
-  } catch (error) {
-    const status =
-      getErrorStatus(error);
-
-    console.error(
-      "OPENROUTER_PRIMARY_FAILED:",
-      JSON.stringify({
-        status,
-        message:
-          error instanceof Error
-            ? error.message
-            : String(error),
-      })
-    );
-
-    /*
-     * Do NOT hide authentication/configuration
-     * errors or 404 errors.
-     *
-     * Only temporary availability/rate-limit
-     * problems should trigger the fallback.
-     */
-    const shouldFallback =
-      status === 429 ||
-      status === 500 ||
-      status === 502 ||
-      status === 503 ||
-      status === 504 ||
-      (
-        error instanceof Error &&
-        error.name === "TimeoutError"
-      );
-
-    if (!shouldFallback) {
-      throw error;
-    }
-  }
-
-  /*
-   * Free router fallback.
-   */
-  try {
-    return await callOpenRouter(
-      FALLBACK_MODEL,
-      prompt
-    );
-  } catch (error) {
-    const status =
-      getErrorStatus(error);
-
-    console.error(
-      "OPENROUTER_FALLBACK_FAILED:",
-      JSON.stringify({
-        status,
-        message:
-          error instanceof Error
-            ? error.message
-            : String(error),
-      })
-    );
-
-    if (status === 429) {
-      const rateLimitError =
-        new Error(
-          "The free OpenRouter models are temporarily rate-limited. Please try again shortly."
-        );
-
-      (
-        rateLimitError as Error & {
-          status?: number;
-        }
-      ).status = 429;
-
-      throw rateLimitError;
-    }
-
-    if (status === 504) {
-      const timeoutError =
-        new Error(
-          "The AI provider took too long to respond. Please try again shortly."
-        );
-
-      (
-        timeoutError as Error & {
-          status?: number;
-        }
-      ).status = 504;
-
-      throw timeoutError;
-    }
-
-    throw error;
-  }
-}
-
 export async function POST(
   request: Request
 ) {
@@ -937,9 +896,11 @@ export async function POST(
       return NextResponse.json(
         {
           success: false,
+
           error:
             "Please enter a claim to investigate.",
         },
+
         {
           status: 400,
         }
@@ -953,9 +914,11 @@ export async function POST(
       return NextResponse.json(
         {
           success: false,
+
           error:
             `Claims must be ${MAX_CLAIM_LENGTH} characters or fewer.`,
         },
+
         {
           status: 400,
         }
@@ -968,9 +931,11 @@ export async function POST(
       return NextResponse.json(
         {
           success: false,
+
           error:
             "Tavily API key is not configured.",
         },
+
         {
           status: 500,
         }
@@ -983,9 +948,11 @@ export async function POST(
       return NextResponse.json(
         {
           success: false,
+
           error:
             "OpenRouter API key is not configured.",
         },
+
         {
           status: 500,
         }
@@ -998,7 +965,7 @@ export async function POST(
 
     /*
      * Step 1:
-     * Search the web.
+     * Search the web for evidence.
      */
     console.log(
       "TRUTH_CHECKER_SEARCHING"
@@ -1019,9 +986,11 @@ export async function POST(
       return NextResponse.json(
         {
           success: false,
+
           error:
             "No web evidence was found for this claim.",
         },
+
         {
           status: 502,
         }
@@ -1030,16 +999,18 @@ export async function POST(
 
     /*
      * Step 2:
-     * Analyze the evidence with OpenRouter.
+     * Analyze the collected evidence.
      */
     console.log(
       "TRUTH_CHECKER_ANALYZING"
     );
 
     const investigation =
-      await analyzeWithOpenRouter(
-        claim,
-        evidence
+      await callOpenRouter(
+        buildPrompt(
+          claim,
+          evidence
+        )
       );
 
     console.log(
@@ -1050,8 +1021,11 @@ export async function POST(
 
     return NextResponse.json({
       success: true,
+
       claim,
+
       investigation,
+
       evidence,
     });
   } catch (error) {
@@ -1066,28 +1040,57 @@ export async function POST(
         : "The investigation could not be completed.";
 
     const status =
-      getErrorStatus(error);
+      getErrorStatus(
+        error
+      );
 
-    if (status === 429) {
+    if (
+      status === 429
+    ) {
       return NextResponse.json(
         {
           success: false,
-          error: message,
+
+          error:
+            "The free AI service is temporarily rate-limited. Please try again shortly.",
         },
+
         {
           status: 429,
         }
       );
     }
 
-    if (status === 504) {
+    if (
+      status === 504
+    ) {
       return NextResponse.json(
         {
           success: false,
-          error: message,
+
+          error:
+            "The AI provider took too long to respond. Please try again shortly.",
         },
+
         {
           status: 504,
+        }
+      );
+    }
+
+    if (
+      status === 404
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+
+          error:
+            "The selected AI model is currently unavailable. Please try again later.",
+        },
+
+        {
+          status: 502,
         }
       );
     }
@@ -1095,8 +1098,10 @@ export async function POST(
     return NextResponse.json(
       {
         success: false,
+
         error: message,
       },
+
       {
         status: 500,
       }
