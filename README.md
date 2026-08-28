@@ -7,10 +7,11 @@ Truth Checker is an evidence-first web application for investigating claims. Ent
 ## 🔎 What it does
 
 1. **Accepts a claim** — the user enters a statement they want to investigate.
-2. **Retrieves evidence** — relevant web sources are gathered for the claim.
-3. **Analyzes the evidence** — the AI compares the supplied evidence conservatively rather than treating the model's prior knowledge as proof.
-4. **Explains the conclusion** — the result includes a verdict, confidence level, reasoning, context, and evidence categories worth checking.
-5. **Shows the sources** — users can inspect the underlying web evidence themselves.
+2. **Retrieves evidence** — two retrieval angles are used to reduce dependence on a single search ranking.
+3. **Normalizes evidence** — duplicate URLs are removed, source domains are limited, malformed URLs are rejected, and simple source-quality signals help diversify the evidence set.
+4. **Analyzes the evidence** — the AI is instructed to treat retrieved web content as untrusted data and to avoid using its own memory as evidence.
+5. **Explains the conclusion** — the result includes a verdict, confidence level, reasoning, context, and evidence categories worth checking.
+6. **Shows the sources** — users can inspect the underlying web evidence themselves.
 
 ## Verdicts
 
@@ -21,17 +22,17 @@ Truth Checker uses four intentionally cautious outcomes:
 - **Misleading** — the claim contains an important missing, distorted, or over-simplified context.
 - **Unclear** — the available evidence is insufficient to reach a responsible conclusion.
 
-Confidence is reported separately as **High**, **Medium**, or **Low**.
+Confidence is reported separately as **High**, **Medium**, or **Low**. Confidence is guarded server-side so a small or overly concentrated evidence set cannot automatically produce a High-confidence result.
 
-## 🛡️ Evidence-first design
+## 🛡️ Evidence-first and security design
 
-The application is designed around an important distinction:
+A confident AI answer is not the same thing as verified evidence.
 
-> **A confident AI answer is not the same thing as verified evidence.**
+The API validates claim input, keeps provider credentials server-side, validates returned investigation data, rejects malformed evidence URLs, limits source concentration, and uses no-store responses for investigations.
 
-The analysis prompt instructs the model to use the supplied web evidence, avoid inventing facts or sources, compare disagreements, and choose `Unclear` when the evidence is insufficient.
+Retrieved web content is explicitly treated as **untrusted data**. Source text must never be interpreted as instructions to the model.
 
-The application also validates the returned structure before sending the investigation to the interface.
+The interface always exposes the source URLs so important claims can be checked independently.
 
 ## Architecture
 
@@ -44,11 +45,15 @@ Next.js interface
     ▼
 /api/check
     │
-    ├── Input validation
+    ├── Request validation
     │
-    ├── Web evidence retrieval
+    ├── Two-angle web retrieval
     │
-    └── Evidence normalization
+    ├── URL/domain normalization
+    │
+    ├── Source-quality signals
+    │
+    └── Evidence limits
             │
             ▼
        OpenRouter
@@ -63,19 +68,22 @@ Next.js interface
     Investigation validation
             │
             ▼
+     Confidence guard
+            │
+            ▼
       Result + sources
 ```
 
 ## Tech stack
 
 - **Next.js 16**
-- **React**
+- **React 19**
 - **TypeScript**
 - **Tailwind CSS**
 - **Tavily** for web evidence retrieval
-- **OpenRouter** for AI analysis
+- **OpenRouter** for AI-assisted analysis
 - **Vercel** for deployment
-- **GitHub** for source control
+- **GitHub Actions** for CI
 
 ## Environment variables
 
@@ -100,32 +108,68 @@ Open `http://localhost:3000`.
 For a production build:
 
 ```bash
+npm run lint
 npm run build
 npm run start
 ```
+
+## Continuous integration
+
+Every push to `master` and every pull request targeting `master` runs:
+
+```text
+npm ci
+npm run lint
+npm run build
+```
+
+The workflow currently runs on Node.js 24 with the current GitHub Actions checkout/setup-node releases.
+
+## SEO and web identity
+
+The project includes:
+
+- Canonical URL metadata
+- Google indexing directives
+- `robots.txt`
+- `sitemap.xml`
+- Structured data
+- Web app manifest
+- SVG application icon
+- Generated Open Graph image
+- Generated Twitter image
+- HTTPS deployment
 
 ## Project structure
 
 ```text
 truth-checker/
+├── .github/workflows/ci.yml
 ├── app/
-│   ├── api/
-│   │   └── check/
-│   │       └── route.ts
+│   ├── api/check/route.ts
 │   ├── icon.svg
+│   ├── favicon.ico
 │   ├── layout.tsx
+│   ├── manifest.ts
+│   ├── opengraph-image.tsx
 │   ├── robots.ts
 │   ├── sitemap.ts
 │   ├── structured-data.tsx
+│   ├── twitter-image.tsx
 │   └── page.tsx
 ├── public/
 ├── package.json
+├── package-lock.json
 └── README.md
 ```
 
-## Live
+## Live application
 
 **https://truth-checker-app.vercel.app/**
+
+## Disclaimer
+
+Truth Checker analyzes available evidence and does not replace primary sources, expert advice, or professional judgment. Evidence availability and source quality can vary, so important claims should be independently verified.
 
 ## Author
 
