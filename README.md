@@ -1,36 +1,136 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Truth Checker
 
-## Getting Started
+> **Evidence before certainty.**
 
-First, run the development server:
+Truth Checker is an evidence-first web application for investigating claims. Enter a statement, let the system gather relevant web evidence, and receive a clear, understandable analysis instead of an unsupported yes/no answer.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+## 🔎 What it does
+
+1. **Accepts a claim** — the user enters a statement they want to investigate.
+2. **Retrieves evidence** — relevant web sources are gathered for the claim.
+3. **Analyzes the evidence** — the AI compares the supplied evidence conservatively rather than treating the model's prior knowledge as proof.
+4. **Explains the conclusion** — the result includes a verdict, confidence level, reasoning, context, and evidence categories worth checking.
+5. **Shows the sources** — users can inspect the underlying web evidence themselves.
+
+## Verdicts
+
+Truth Checker uses four intentionally cautious outcomes:
+
+- **Likely true** — the available evidence generally supports the claim.
+- **Likely false** — the available evidence generally contradicts the claim.
+- **Misleading** — the claim contains an important missing, distorted, or over-simplified context.
+- **Unclear** — the available evidence is insufficient to reach a responsible conclusion.
+
+Confidence is reported separately as **High**, **Medium**, or **Low**.
+
+## 🛡️ Evidence-first design
+
+The application is designed around an important distinction:
+
+> **A confident AI answer is not the same thing as verified evidence.**
+
+The analysis prompt instructs the model to use the supplied web evidence, avoid inventing facts or sources, compare disagreements, and choose `Unclear` when the evidence is insufficient.
+
+The application also validates the returned structure before sending the investigation to the interface.
+
+## Architecture
+
+```text
+User claim
+    │
+    ▼
+Next.js interface
+    │
+    ▼
+/api/check
+    │
+    ├── Input validation
+    │
+    ├── Web evidence retrieval
+    │
+    └── Evidence normalization
+            │
+            ▼
+       OpenRouter
+            │
+            ▼
+     Structured analysis
+            │
+            ▼
+      JSON extraction
+            │
+            ▼
+    Investigation validation
+            │
+            ▼
+      Result + sources
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Tech stack
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- **Next.js 16**
+- **React**
+- **TypeScript**
+- **Tailwind CSS**
+- **Tavily** for web evidence retrieval
+- **OpenRouter** for AI analysis
+- **Vercel** for deployment
+- **GitHub** for source control
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Environment variables
 
-## Learn More
+Create a local `.env.local` file with the required server-side credentials:
 
-To learn more about Next.js, take a look at the following resources:
+```text
+TAVILY_API_KEY=your_tavily_key
+OPENROUTER_API_KEY=your_openrouter_key
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Never commit API keys or other secrets to GitHub.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Run locally
 
-## Deploy on Vercel
+```bash
+npm install
+npm run dev
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Open `http://localhost:3000`.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+For a production build:
+
+```bash
+npm run build
+npm run start
+```
+
+## Project structure
+
+```text
+truth-checker/
+├── app/
+│   ├── api/
+│   │   └── check/
+│   │       └── route.ts
+│   ├── icon.svg
+│   ├── layout.tsx
+│   ├── robots.ts
+│   ├── sitemap.ts
+│   ├── structured-data.tsx
+│   └── page.tsx
+├── public/
+├── package.json
+└── README.md
+```
+
+## Live
+
+**https://truth-checker-app.vercel.app/**
+
+## Author
+
+**Koglesh R. Murugan**
+
+Truth Checker is an independent project exploring how web evidence and AI can work together to make claim investigation clearer and more transparent.
+
+> **Investigate before you believe.**
