@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
 type EvidenceSource = {
@@ -70,17 +71,22 @@ export default function Home() {
     switch (verdictLabel) {
       case "Likely true":
         return "The available evidence generally supports this claim.";
+
       case "Likely false":
         return "The available evidence generally contradicts this claim.";
+
       case "Misleading":
         return "The claim contains an element of truth but lacks important context.";
+
       default:
         return "There is not enough reliable evidence to reach a strong conclusion.";
     }
   }, [verdictLabel]);
 
   useEffect(() => {
-    if (!copied) return;
+    if (!copied) {
+      return;
+    }
 
     const timer = window.setTimeout(() => {
       setCopied(false);
@@ -114,7 +120,9 @@ export default function Home() {
 
     const stageTimer = window.setInterval(() => {
       setActiveStage((current) =>
-        current < investigationStages.length - 1 ? current + 1 : current
+        current < investigationStages.length - 1
+          ? current + 1
+          : current
       );
     }, 900);
 
@@ -183,7 +191,9 @@ export default function Home() {
   }
 
   async function copyResult() {
-    if (!result?.investigation) return;
+    if (!result?.investigation) {
+      return;
+    }
 
     const text = [
       "TRUTH CHECKER",
@@ -216,10 +226,13 @@ export default function Home() {
     switch (verdict) {
       case "Likely true":
         return "text-emerald-400";
+
       case "Likely false":
         return "text-red-400";
+
       case "Misleading":
         return "text-amber-400";
+
       default:
         return "text-sky-400";
     }
@@ -229,21 +242,28 @@ export default function Home() {
     switch (verdict) {
       case "Likely true":
         return "border-emerald-400/20 bg-emerald-400/[0.045]";
+
       case "Likely false":
         return "border-red-400/20 bg-red-400/[0.045]";
+
       case "Misleading":
         return "border-amber-400/20 bg-amber-400/[0.045]";
+
       default:
         return "border-sky-400/20 bg-sky-400/[0.045]";
     }
   }
 
-  function confidenceColor(confidence?: Investigation["confidence"]) {
+  function confidenceColor(
+    confidence?: Investigation["confidence"]
+  ) {
     switch (confidence) {
       case "High":
         return "border-emerald-400/20 bg-emerald-400/10 text-emerald-300";
+
       case "Medium":
         return "border-amber-400/20 bg-amber-400/10 text-amber-300";
+
       default:
         return "border-sky-400/20 bg-sky-400/10 text-sky-300";
     }
@@ -273,8 +293,15 @@ export default function Home() {
             className="group flex items-center gap-3 text-left"
             aria-label="Return to Truth Checker home"
           >
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white text-sm font-black text-black shadow-lg shadow-white/[0.05] transition-transform duration-300 group-hover:scale-105">
-              T
+            <div className="relative flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl border border-white/[0.10] bg-white/[0.04] shadow-lg shadow-black/20 transition-transform duration-300 group-hover:scale-105">
+              <Image
+                src="/icon.svg"
+                alt="Truth Checker"
+                width={40}
+                height={40}
+                className="h-full w-full object-contain p-1"
+                priority
+              />
             </div>
 
             <div>
@@ -324,7 +351,10 @@ export default function Home() {
                 value={claim}
                 onChange={(event) => {
                   setClaim(event.target.value);
-                  if (error) setError("");
+
+                  if (error) {
+                    setError("");
+                  }
                 }}
                 placeholder='Try: "Humans only use 10% of their brains."'
                 maxLength={500}
@@ -377,6 +407,7 @@ export default function Home() {
                 <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-red-400/30 text-[10px] font-bold">
                   !
                 </span>
+
                 <span>{error}</span>
               </div>
             </div>
@@ -431,6 +462,7 @@ export default function Home() {
                 <div>
                   <div className="flex items-center gap-3">
                     <div className="h-3 w-3 animate-pulse rounded-full bg-emerald-400" />
+
                     <p className="font-semibold">
                       Investigating your claim
                     </p>
@@ -451,7 +483,9 @@ export default function Home() {
                   className="h-full rounded-full bg-white transition-all duration-700"
                   style={{
                     width: `${
-                      ((activeStage + 1) / investigationStages.length) * 100
+                      ((activeStage + 1) /
+                        investigationStages.length) *
+                      100
                     }%`,
                   }}
                 />
@@ -588,7 +622,9 @@ export default function Home() {
                       Why
                     </p>
 
-                    <h3 className="mt-2 text-xl font-bold">Reasoning</h3>
+                    <h3 className="mt-2 text-xl font-bold">
+                      Reasoning
+                    </h3>
                   </div>
 
                   <span className="rounded-full border border-white/[0.07] bg-white/[0.02] px-3 py-1 text-[10px] font-semibold text-zinc-600">
@@ -597,17 +633,22 @@ export default function Home() {
                 </div>
 
                 <div className="mt-7 space-y-5">
-                  {result.investigation.reasoning.map((item, index) => (
-                    <div key={`${item}-${index}`} className="flex gap-4">
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-white/[0.06] bg-white/[0.025] text-[10px] font-bold text-zinc-500">
-                        {String(index + 1).padStart(2, "0")}
-                      </div>
+                  {result.investigation.reasoning.map(
+                    (item, index) => (
+                      <div
+                        key={`${item}-${index}`}
+                        className="flex gap-4"
+                      >
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-white/[0.06] bg-white/[0.025] text-[10px] font-bold text-zinc-500">
+                          {String(index + 1).padStart(2, "0")}
+                        </div>
 
-                      <p className="text-sm leading-7 text-zinc-400">
-                        {item}
-                      </p>
-                    </div>
-                  ))}
+                        <p className="text-sm leading-7 text-zinc-400">
+                          {item}
+                        </p>
+                      </div>
+                    )
+                  )}
                 </div>
               </div>
 
@@ -631,6 +672,7 @@ export default function Home() {
                     <p className="text-[10px] uppercase tracking-wider text-zinc-600">
                       Confidence
                     </p>
+
                     <p className="mt-2 text-sm font-semibold text-zinc-300">
                       {confidenceLabel}
                     </p>
@@ -640,6 +682,7 @@ export default function Home() {
                     <p className="text-[10px] uppercase tracking-wider text-zinc-600">
                       Sources
                     </p>
+
                     <p className="mt-2 text-sm font-semibold text-zinc-300">
                       {evidenceCount}
                     </p>
@@ -660,8 +703,8 @@ export default function Home() {
                   </h3>
 
                   <p className="mt-2 text-sm text-zinc-500">
-                    Review the underlying sources yourself before making an
-                    important decision.
+                    Review the underlying sources yourself before making
+                    an important decision.
                   </p>
                 </div>
 
@@ -700,8 +743,13 @@ export default function Home() {
                         </p>
 
                         <div className="mt-4 flex items-center gap-2 text-xs text-zinc-700">
-                          <span className="truncate">{source.url}</span>
-                          <span className="shrink-0 text-zinc-600">↗</span>
+                          <span className="truncate">
+                            {source.url}
+                          </span>
+
+                          <span className="shrink-0 text-zinc-600">
+                            ↗
+                          </span>
                         </div>
                       </div>
                     </div>
@@ -731,20 +779,22 @@ export default function Home() {
               </p>
 
               <div className="mt-7 grid gap-3 md:grid-cols-2">
-                {result.investigation.evidenceToCheck.map((item, index) => (
-                  <div
-                    key={`${item}-${index}`}
-                    className="flex gap-3 rounded-2xl border border-white/[0.06] bg-black/20 p-4 transition hover:border-white/[0.10] hover:bg-white/[0.025]"
-                  >
-                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-white/[0.04] text-[9px] font-bold text-zinc-600">
-                      {String(index + 1).padStart(2, "0")}
-                    </span>
+                {result.investigation.evidenceToCheck.map(
+                  (item, index) => (
+                    <div
+                      key={`${item}-${index}`}
+                      className="flex gap-3 rounded-2xl border border-white/[0.06] bg-black/20 p-4 transition hover:border-white/[0.10] hover:bg-white/[0.025]"
+                    >
+                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-white/[0.04] text-[9px] font-bold text-zinc-600">
+                        {String(index + 1).padStart(2, "0")}
+                      </span>
 
-                    <p className="text-sm leading-6 text-zinc-400">
-                      {item}
-                    </p>
-                  </div>
-                ))}
+                      <p className="text-sm leading-6 text-zinc-400">
+                        {item}
+                      </p>
+                    </div>
+                  )
+                )}
               </div>
             </div>
 
