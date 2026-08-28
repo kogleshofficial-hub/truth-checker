@@ -28,11 +28,13 @@ type CheckResponse = {
 const investigationStages = [
   {
     title: "Understanding the claim",
-    description: "Breaking the statement into something that can actually be tested.",
+    description:
+      "Breaking the statement into something that can actually be tested.",
   },
   {
     title: "Searching the evidence",
-    description: "Looking for relevant information from available web sources.",
+    description:
+      "Looking for relevant information from available web sources.",
   },
   {
     title: "Comparing findings",
@@ -98,7 +100,9 @@ export default function Home() {
     }
 
     if (cleanedClaim.length < 8) {
-      setError("Give us a little more information so the claim can be investigated properly.");
+      setError(
+        "Give us a little more information so the claim can be investigated properly."
+      );
       return;
     }
 
@@ -155,7 +159,7 @@ export default function Home() {
     }
   }
 
-  function useExample(example: string) {
+  function handleExample(example: string) {
     setClaim(example);
     setError("");
     setResult(null);
@@ -202,7 +206,9 @@ export default function Home() {
       await navigator.clipboard.writeText(text);
       setCopied(true);
     } catch {
-      setError("Could not copy the result. Your browser may have blocked clipboard access.");
+      setError(
+        "Could not copy the result. Your browser may have blocked clipboard access."
+      );
     }
   }
 
@@ -353,7 +359,7 @@ export default function Home() {
                 <button
                   key={example}
                   type="button"
-                  onClick={() => useExample(example)}
+                  onClick={() => handleExample(example)}
                   className="rounded-full border border-white/[0.07] bg-white/[0.02] px-3 py-1.5 text-xs text-zinc-500 transition hover:border-white/[0.14] hover:bg-white/[0.05] hover:text-zinc-300"
                 >
                   {example}
@@ -582,9 +588,7 @@ export default function Home() {
                       Why
                     </p>
 
-                    <h3 className="mt-2 text-xl font-bold">
-                      Reasoning
-                    </h3>
+                    <h3 className="mt-2 text-xl font-bold">Reasoning</h3>
                   </div>
 
                   <span className="rounded-full border border-white/[0.07] bg-white/[0.02] px-3 py-1 text-[10px] font-semibold text-zinc-600">
@@ -594,10 +598,7 @@ export default function Home() {
 
                 <div className="mt-7 space-y-5">
                   {result.investigation.reasoning.map((item, index) => (
-                    <div
-                      key={`${item}-${index}`}
-                      className="flex gap-4"
-                    >
+                    <div key={`${item}-${index}`} className="flex gap-4">
                       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-white/[0.06] bg-white/[0.025] text-[10px] font-bold text-zinc-500">
                         {String(index + 1).padStart(2, "0")}
                       </div>
@@ -699,12 +700,8 @@ export default function Home() {
                         </p>
 
                         <div className="mt-4 flex items-center gap-2 text-xs text-zinc-700">
-                          <span className="truncate">
-                            {source.url}
-                          </span>
-                          <span className="shrink-0 text-zinc-600">
-                            ↗
-                          </span>
+                          <span className="truncate">{source.url}</span>
+                          <span className="shrink-0 text-zinc-600">↗</span>
                         </div>
                       </div>
                     </div>
