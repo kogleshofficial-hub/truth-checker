@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function NotFound() {
   return (
     <main className="min-h-screen bg-[#050608] text-white">
@@ -16,12 +18,12 @@ export default function NotFound() {
             to Truth Checker and start a new investigation.
           </p>
 
-          <a
+          <Link
             href="/"
             className="mt-7 inline-flex rounded-full bg-white px-6 py-3 text-sm font-bold text-black transition hover:-translate-y-0.5 hover:bg-zinc-200 focus-visible:outline-2 focus-visible:outline-white focus-visible:outline-offset-3"
           >
             Back to Truth Checker
-          </a>
+          </Link>
         </section>
       </div>
     </main>
