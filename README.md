@@ -1,205 +1,138 @@
-# Truth Checker
+# Truth Checker 🔎
 
 > **Evidence before certainty.**
 
-Truth Checker is an evidence-first web application for investigating claims. Enter a statement, let the system gather relevant web evidence, and receive a clear, understandable analysis instead of an unsupported yes/no answer.
+Truth Checker is an evidence-first web application for investigating claims. Enter a statement, let the system gather relevant web evidence, and receive a transparent analysis with sources instead of an unsupported yes/no answer.
 
-## 🔎 What it does
+## 🚀 Live app
 
-1. **Accepts a claim** — the user enters a statement they want to investigate.
-2. **Retrieves evidence** — two retrieval angles are used to reduce dependence on a single search ranking.
-3. **Normalizes evidence** — duplicate URLs are removed, source domains are limited, malformed URLs are rejected, and simple source-quality signals help diversify the evidence set.
-4. **Analyzes the evidence** — the AI is instructed to treat retrieved web content as untrusted data and to avoid using its own memory as evidence.
-5. **Explains the conclusion** — the result includes a verdict, confidence level, reasoning, context, and evidence categories worth checking.
-6. **Shows the sources** — users can inspect the underlying web evidence themselves.
+**https://truth-checker-app.vercel.app/**
+
+## Why I built it
+
+AI can sound confident even when the evidence is weak.
+
+Truth Checker explores a different approach: retrieve evidence first, treat that evidence as untrusted data, analyze it, and show the sources so the user can inspect them.
+
+## 🔎 How it works
+
+```text
+Claim
+  ↓
+Web evidence retrieval
+  ↓
+URL + source normalization
+  ↓
+Evidence limits
+  ↓
+AI analysis
+  ↓
+Structured validation
+  ↓
+Verdict + confidence + reasoning
+  ↓
+Sources the user can inspect
+```
 
 ## Verdicts
 
-Truth Checker uses four intentionally cautious outcomes:
+The application uses four intentionally cautious outcomes:
 
-- **Likely true** — the available evidence generally supports the claim.
-- **Likely false** — the available evidence generally contradicts the claim.
-- **Misleading** — the claim contains an important missing, distorted, or over-simplified context.
-- **Unclear** — the available evidence is insufficient to reach a responsible conclusion.
+- **Likely true** — available evidence generally supports the claim
+- **Likely false** — available evidence generally contradicts the claim
+- **Misleading** — important context is missing or distorted
+- **Unclear** — available evidence is insufficient
 
-Confidence is reported separately as **High**, **Medium**, or **Low**. Confidence is guarded server-side so a small or overly concentrated evidence set cannot automatically produce a High-confidence result.
+Confidence is reported separately as **High**, **Medium**, or **Low**.
 
-## 🛡️ Evidence-first and security design
+## 🛡️ Evidence-first design
 
-A confident AI answer is not the same thing as verified evidence.
+A confident AI response is not the same thing as verified evidence.
 
-The API validates claim input, keeps provider credentials server-side, validates returned investigation data, rejects malformed evidence URLs, limits source concentration, and uses no-store responses for investigations.
+The application validates claim input, keeps provider credentials server-side, validates investigation results, rejects malformed evidence URLs, limits source concentration, and exposes the underlying sources.
 
-Retrieved web content is explicitly treated as **untrusted data**. Source text must never be interpreted as instructions to the model.
+Retrieved web content is treated as **untrusted data**, not as instructions for the model.
 
-The interface always exposes the source URLs so important claims can be checked independently.
-
-## Architecture
+## 🧱 Architecture
 
 ```text
 User claim
-    │
-    ▼
+    ↓
 Next.js interface
-    │
-    ▼
+    ↓
 /api/check
-    │
     ├── Request validation
-    │
     ├── Two-angle web retrieval
-    │
     ├── URL/domain normalization
-    │
     ├── Source-quality signals
-    │
     └── Evidence limits
-            │
-            ▼
-       OpenRouter
-            │
-            ▼
-     Structured analysis
-            │
-            ▼
+            ↓
+        OpenRouter
+            ↓
+    Structured analysis
+            ↓
       JSON extraction
-            │
-            ▼
-    Investigation validation
-            │
-            ▼
+            ↓
+   Investigation validation
+            ↓
      Confidence guard
-            │
-            ▼
+            ↓
       Result + sources
 ```
 
-## Tech stack
+## 🛠️ Tech stack
 
-- **Next.js 16**
-- **React 19**
-- **TypeScript**
-- **Tailwind CSS**
-- **Tavily** for web evidence retrieval
-- **OpenRouter** for AI-assisted analysis
-- **Vercel** for deployment
-- **GitHub Actions** for CI
+- Next.js 16
+- React 19
+- TypeScript
+- Tailwind CSS
+- Tavily for web evidence retrieval
+- OpenRouter for AI-assisted analysis
+- Vercel
+- GitHub Actions
 
-## Environment variables
-
-Create a local `.env.local` file with the required server-side credentials:
-
-```text
-TAVILY_API_KEY=your_tavily_key
-OPENROUTER_API_KEY=your_openrouter_key
-```
-
-Never commit API keys or other secrets to GitHub.
-
-## Run locally
+## 💻 Run locally
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open `http://localhost:3000`.
+Create `.env.local` with the required server-side credentials:
 
-For a production validation, run the single verification command:
+```text
+TAVILY_API_KEY=your_tavily_key
+OPENROUTER_API_KEY=your_openrouter_key
+```
+
+Never commit API keys or other secrets.
+
+For production validation:
 
 ```bash
 npm run verify
 ```
 
-It runs the same three local quality gates used by CI:
+This runs the project's lint, typecheck, and build checks.
 
-```text
-npm run lint
-npm run typecheck
-npm run build
-```
+## 🌐 Web identity
 
-You can also start the production build locally with:
+The application includes production metadata, canonical URLs, robots configuration, a sitemap, structured data, a web manifest, and social preview images.
 
-```bash
-npm run start
-```
+## ⚠️ Important limitation
 
-## Continuous integration
+Truth Checker is an investigation aid, not a guarantee of truth. Evidence can be incomplete, outdated, biased, or wrong. Important claims should be checked against primary and authoritative sources.
 
-Every push to `master` and every pull request targeting `master` runs:
+## 🚧 Status
 
-```text
-npm ci
-npm run lint
-npm run typecheck
-npm run build
-```
+**Live MVP — actively evolving.**
 
-The workflow runs on Node.js 24 with current GitHub Actions checkout/setup-node releases.
+The long-term goal is to make claim investigation clearer, more transparent, and easier to verify.
 
-## Reliability and UX
+## 👨‍💻 Creator
 
-The application includes dedicated loading, error, and not-found states so navigation and unexpected rendering failures do not leave users at a blank or ambiguous screen.
-
-The interface also supports reduced-motion preferences, visible keyboard focus states, responsive layouts, accessible error messaging, source inspection, and a safe fallback when validated AI analysis cannot be completed.
-
-## SEO and web identity
-
-The project includes:
-
-- Canonical URL metadata
-- Google indexing directives
-- `robots.txt`
-- `sitemap.xml`
-- Structured data
-- Web app manifest
-- SVG application icon
-- Favicon
-- Generated Open Graph image
-- Generated Twitter image
-- Mobile/PWA viewport metadata
-- HTTPS deployment
-
-## Project structure
-
-```text
-truth-checker/
-├── .github/workflows/ci.yml
-├── app/
-│   ├── api/check/route.ts
-│   ├── error.tsx
-│   ├── icon.svg
-│   ├── favicon.ico
-│   ├── globals.css
-│   ├── layout.tsx
-│   ├── loading.tsx
-│   ├── manifest.ts
-│   ├── not-found.tsx
-│   ├── opengraph-image.tsx
-│   ├── robots.ts
-│   ├── sitemap.ts
-│   ├── structured-data.tsx
-│   ├── twitter-image.tsx
-│   └── page.tsx
-├── public/
-├── package.json
-├── package-lock.json
-└── README.md
-```
-
-## Live application
-
-**https://truth-checker-app.vercel.app/**
-
-## Disclaimer
-
-Truth Checker analyzes available evidence and does not replace primary sources, expert advice, or professional judgment. Evidence availability and source quality can vary, so important claims should be independently verified.
-
-## Author
-
-**Koglesh R. Murugan**
-
-Truth Checker is an independent project exploring how web evidence and AI can work together to make claim investigation clearer and more transparent.
+Built independently by **Koglesh R. Murugan**, a 16-year-old developer from Malaysia.
 
 > **Investigate before you believe.**
+
+**Live:** https://truth-checker-app.vercel.app/
