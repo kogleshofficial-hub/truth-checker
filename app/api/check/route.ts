@@ -34,7 +34,7 @@ export const maxDuration = 60;
 
 const TAVILY_URL = "https://api.tavily.com/search";
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
-const FREE_MODEL = "openrouter/free";
+const FREE_MODEL = "openai/gpt-oss-20b:free";
 const MAX_CLAIM_LENGTH = 500;
 const MAX_REQUEST_BYTES = 20_000;
 const MAX_EVIDENCE_SOURCES = 8;
