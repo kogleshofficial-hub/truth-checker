@@ -2,105 +2,62 @@
 
 > **Evidence before certainty.**
 
-Truth Checker is an evidence-first web application for investigating claims. Enter a statement, let the system gather relevant web evidence, and receive a transparent analysis with sources instead of an unsupported yes/no answer.
+Truth Checker is an evidence-first web application for investigating claims. Instead of asking an AI model to answer from memory, it retrieves relevant web evidence, treats that material as untrusted data, and produces a cautious, structured analysis with sources a person can inspect.
 
-## 🚀 Live app
+## Live app
 
 **https://truth-checker-app.vercel.app/**
 
 ## Why I built it
 
-AI can sound confident even when the evidence is weak.
+AI systems can sound confident even when the evidence behind an answer is weak. Truth Checker explores a different workflow:
 
-Truth Checker explores a different approach: retrieve evidence first, treat that evidence as untrusted data, analyze it, and show the sources so the user can inspect them.
+**Claim → web evidence → source normalization → evidence limits → AI analysis → validation → verdict + confidence → inspectable sources**
 
-## 🔎 How it works
+The goal is not to replace human judgment. It is to make the path from a claim to the evidence behind an explanation easier to inspect.
 
-```text
-Claim
-  ↓
-Web evidence retrieval
-  ↓
-URL + source normalization
-  ↓
-Evidence limits
-  ↓
-AI analysis
-  ↓
-Structured validation
-  ↓
-Verdict + confidence + reasoning
-  ↓
-Sources the user can inspect
-```
+## What it returns
 
-## Verdicts
+Every investigation uses four deliberately cautious verdicts:
 
-The application uses four intentionally cautious outcomes:
+- **Likely true** — available evidence generally supports the claim.
+- **Likely false** — available evidence generally contradicts the claim.
+- **Misleading** — the statement needs important context or is materially incomplete.
+- **Unclear** — the available evidence is insufficient or genuinely conflicting.
 
-- **Likely true** — available evidence generally supports the claim
-- **Likely false** — available evidence generally contradicts the claim
-- **Misleading** — important context is missing or distorted
-- **Unclear** — available evidence is insufficient
+Confidence is reported separately as **High, Medium, or Low** so a verdict is not presented as absolute certainty.
 
-Confidence is reported separately as **High**, **Medium**, or **Low**.
+## Evidence-first safeguards
 
-## 🛡️ Evidence-first design
+- Web content is treated as **untrusted data**, not model instructions.
+- Source URLs are normalized and validated before being shown.
+- Source concentration is limited so one domain cannot dominate the evidence set.
+- The analysis prompt explicitly rejects invented sources, quotations, statistics, and facts.
+- Confidence is automatically reduced when the evidence set is too small or lacks source diversity.
+- Malformed model output is rejected instead of being rendered as a result.
+- Important claims are explicitly directed back to primary and authoritative sources.
 
-A confident AI response is not the same thing as verified evidence.
-
-The application validates claim input, keeps provider credentials server-side, validates investigation results, rejects malformed evidence URLs, limits source concentration, and exposes the underlying sources.
-
-Retrieved web content is treated as **untrusted data**, not as instructions for the model.
-
-## 🧱 Architecture
-
-```text
-User claim
-    ↓
-Next.js interface
-    ↓
-/api/check
-    ├── Request validation
-    ├── Two-angle web retrieval
-    ├── URL/domain normalization
-    ├── Source-quality signals
-    └── Evidence limits
-            ↓
-        OpenRouter
-            ↓
-    Structured analysis
-            ↓
-      JSON extraction
-            ↓
-   Investigation validation
-            ↓
-     Confidence guard
-            ↓
-      Result + sources
-```
-
-## 🛠️ Tech stack
+## Tech stack
 
 - Next.js 16
 - React 19
 - TypeScript
 - Tailwind CSS
 - Tavily for web evidence retrieval
-- OpenRouter for AI-assisted analysis
+- OpenRouter free-model routing for AI-assisted analysis
 - Vercel
 - GitHub Actions
 
-## 💻 Run locally
+## Run locally
 
 ```bash
 npm install
 npm run dev
 ```
 
-Create `.env.local` with the required server-side credentials:
+Create `.env.local`:
 
-```text
+```env
 TAVILY_API_KEY=your_tavily_key
 OPENROUTER_API_KEY=your_openrouter_key
 ```
@@ -115,24 +72,12 @@ npm run verify
 
 This runs the project's lint, typecheck, and build checks.
 
-## 🌐 Web identity
+## Important limitation
 
-The application includes production metadata, canonical URLs, robots configuration, a sitemap, structured data, a web manifest, and social preview images.
+Truth Checker is an **investigation aid, not a guarantee of truth**. Web evidence can be incomplete, outdated, biased, or wrong. The app is designed to expose that uncertainty rather than hide it.
 
-## ⚠️ Important limitation
+## Creator
 
-Truth Checker is an investigation aid, not a guarantee of truth. Evidence can be incomplete, outdated, biased, or wrong. Important claims should be checked against primary and authoritative sources.
-
-## 🚧 Status
-
-**Live MVP — actively evolving.**
-
-The long-term goal is to make claim investigation clearer, more transparent, and easier to verify.
-
-## 👨‍💻 Creator
-
-Built independently by **Koglesh R. Murugan**, a 16-year-old developer from Malaysia.
+Built independently by **Koglesh R. Murugan**, a 16-year-old student developer from Malaysia.
 
 > **Investigate before you believe.**
-
-**Live:** https://truth-checker-app.vercel.app/
