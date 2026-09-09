@@ -1,0 +1,39 @@
+name: Fix OpenRouter model
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Replace invalid free router target
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('app/api/check/route.ts')
+          text = path.read_text()
+          old = 'const FREE_MODEL = "openrouter/free";'
+          new = 'const FREE_MODEL = "openai/gpt-oss-20b:free";'
+          if old not in text:
+              raise SystemExit('Expected OpenRouter model declaration was not found')
+          path.write_text(text.replace(old, new, 1))
+          PY
+      - name: Remove one-shot workflow
+        run: rm -f .github/workflows/fix-openrouter.yml
+      - name: Commit fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/api/check/route.ts .github/workflows/fix-openrouter.yml
+          git diff --cached --quiet && exit 0
+          git commit -m "Fix OpenRouter free model target"
+          git push
