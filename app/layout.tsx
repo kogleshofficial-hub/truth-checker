@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import type { ReactNode } from "react";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import StructuredData from "./structured-data";
@@ -24,7 +25,7 @@ export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: "Truth Checker — Evidence Before Certainty",
   description:
-    "Investigate claims with web evidence and AI analysis. Compare sources, understand the reasoning, and make better-informed decisions.",
+    "Investigate claims with public reference material and cautious, on-device AI analysis. Inspect the sources and understand the reasoning.",
   applicationName: "Truth Checker",
   category: "technology",
   creator: "Koglesh R. Murugan",
@@ -78,7 +79,7 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   return (
     <html
       lang="en"
