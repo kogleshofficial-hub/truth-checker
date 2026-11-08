@@ -260,7 +260,13 @@ Important rules:
           300
         );
 
-        const parsed = parseModelJson(generated);
+        let parsed: unknown = null;
+        try {
+          parsed = parseModelJson(generated);
+        } catch (parseError) {
+          console.warn("Local Truth Checker response did not contain valid JSON.", parseError);
+        }
+
         investigation = isValidInvestigation(parsed)
           ? cautiousResult(parsed, foundEvidence.length)
           : {
