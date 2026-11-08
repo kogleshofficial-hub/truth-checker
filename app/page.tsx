@@ -69,7 +69,7 @@ function ensureLocalAI(): Promise<void> {
 }
 
 function parseModelJson(text: string): unknown {
-  const cleaned = text.trim().replace(/^\`\`\`(?:json)?\\s*/i, "").replace(/\\s*\`\`\`$/i, "").trim();
+  const cleaned = text.trim().replace(/^\x60{3}(?:json)?\s*/i, "").replace(/\s*\x60{3}$/i, "").trim();
   const start = cleaned.indexOf("{");
   const end = cleaned.lastIndexOf("}");
   if (start < 0 || end <= start) throw new Error("The local model did not return a complete investigation.");
@@ -112,7 +112,7 @@ async function searchWikipedia(claim: string): Promise<EvidenceSource[]> {
   return (data.query?.pages ?? [])
     .map((page) => {
       const title = typeof page.title === "string" ? page.title : "";
-      const snippet = typeof page.extract === "string" ? page.extract.replace(/\\s+/g, " ").trim() : "";
+      const snippet = typeof page.extract === "string" ? page.extract.replace(/\s+/g, " ").trim() : "";
       const url = typeof page.fullurl === "string" ? page.fullurl : `https://en.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g, "_"))}`;
       return { title, url, snippet };
     })
@@ -186,7 +186,7 @@ export default function Home() {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const cleaned = claim.replace(/\\s+/g, " ").trim();
+    const cleaned = claim.replace(/\s+/g, " ").trim();
     if (!cleaned) return setError("Enter a claim first.");
     if (cleaned.length < 8) return setError("Give us a little more context so the claim can be investigated properly.");
 
@@ -215,7 +215,7 @@ export default function Home() {
 Title: ${source.title}
 URL: ${source.url}
 Excerpt: ${source.snippet.slice(0, 1400)}`
-        ).join("\\n\\n");
+        ).join("\n\n");
 
         const prompt = `Investigate this claim using ONLY the reference excerpts below.
 
