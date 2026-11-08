@@ -2,40 +2,60 @@
 
 > **Evidence before certainty.**
 
-Truth Checker is an evidence-first web application for investigating claims. Instead of asking an AI model to answer from memory, it retrieves relevant web evidence, treats that material as untrusted data, and produces a cautious, structured analysis with sources a person can inspect.
+Truth Checker is an evidence-first web application for investigating claims. It searches public Wikipedia reference pages, treats article excerpts as untrusted evidence, and runs a compact language model in the visitor's browser to produce a cautious, structured analysis.
 
 ## Live app
 
 **https://truth-checker-app.vercel.app/**
 
-## Why I built it
+## How it works
 
-AI systems can sound confident even when the evidence behind an answer is weak. Truth Checker explores a different workflow:
+```text
+Claim
+  ↓
+Wikipedia reference search
+  ↓
+Article excerpts shown to the visitor
+  ↓
+Local LFM2.5-350M model
+  ↓
+Output validation and confidence guard
+  ↓
+Cautious verdict + visible references
+```
 
-**Claim → web evidence → source normalization → evidence limits → AI analysis → validation → verdict + confidence → inspectable sources**
-
-The goal is not to replace human judgment. It is to make the path from a claim to the evidence behind an explanation easier to inspect.
+This free mode is intentionally narrower than a general web search engine. The claim text is sent to Wikipedia's public search API to find reference pages. AI inference itself runs locally in the browser; it is not sent to OpenRouter or another hosted AI provider.
 
 ## What it returns
 
-Every investigation uses four deliberately cautious verdicts:
+Every investigation uses four cautious verdicts:
 
-- **Likely true** — available evidence generally supports the claim.
-- **Likely false** — available evidence generally contradicts the claim.
+- **Likely true** — the available reference excerpts generally support the claim.
+- **Likely false** — the available reference excerpts generally contradict the claim.
 - **Misleading** — the statement needs important context or is materially incomplete.
-- **Unclear** — the available evidence is insufficient or genuinely conflicting.
+- **Unclear** — the available reference excerpts are insufficient or do not address the claim.
 
-Confidence is reported separately as **High, Medium, or Low** so a verdict is not presented as absolute certainty.
+Confidence is reported separately. This mode never returns High confidence, because it uses a compact model and a limited reference set.
 
-## Evidence-first safeguards
+## Evidence and safety limits
 
-- Web content is treated as **untrusted data**, not model instructions.
-- Source URLs are normalized and validated before being shown.
-- Source concentration is limited so one domain cannot dominate the evidence set.
-- The analysis prompt explicitly rejects invented sources, quotations, statistics, and facts.
-- Confidence is automatically reduced when the evidence set is too small or lacks source diversity.
-- Malformed model output is rejected instead of being rendered as a result.
-- Important claims are explicitly directed back to primary and authoritative sources.
+- Searches up to four relevant Wikipedia pages for a claim.
+- Displays the linked article pages and excerpts so a person can inspect them.
+- Treats article text as untrusted data, never as model instructions.
+- Does not invent URLs, quotations, dates, or statistics.
+- Returns Unclear when no useful reference pages are found or the model output fails validation.
+- Does not treat the absence of a Wikipedia result as evidence that a claim is false.
+- Is not a comprehensive live-web fact checker. For important or current claims, verify primary and authoritative sources yourself.
+
+## AI runtime and cost
+
+The app uses [Transformers.js](https://huggingface.co/docs/transformers.js) with the LFM2.5-350M ONNX model from Liquid AI.
+
+- Inference happens on the visitor's device.
+- WebGPU is used when available; CPU/WASM is the fallback.
+- The first use downloads approximately 300 MB of model files from Hugging Face.
+- Model files are cached in the browser where supported. Clearing browser storage or cache eviction may require another download.
+- No AI API key or paid inference account is required.
 
 ## Tech stack
 
@@ -43,8 +63,10 @@ Confidence is reported separately as **High, Medium, or Low** so a verdict is no
 - React 19
 - TypeScript
 - Tailwind CSS
-- Tavily for web evidence retrieval
-- OpenRouter free-model routing for AI-assisted analysis
+- Wikipedia Action API
+- Hugging Face Transformers.js
+- LFM2.5-350M by Liquid AI
+- ONNX Runtime
 - Vercel
 - GitHub Actions
 
@@ -55,29 +77,24 @@ npm install
 npm run dev
 ```
 
-Create `.env.local`:
+Open `http://localhost:3000`. No `.env.local` file, Tavily key, or OpenRouter key is required.
 
-```env
-TAVILY_API_KEY=your_tavily_key
-OPENROUTER_API_KEY=your_openrouter_key
-```
-
-Never commit API keys or other secrets.
-
-For production validation:
+For verification:
 
 ```bash
 npm run verify
 ```
 
-This runs the project's lint, typecheck, and build checks.
+## Model license
+
+LFM2.5-350M is distributed under the [LFM Open License v1.0](https://www.liquid.ai/lfm-license). The license permits commercial use subject to its $10 million annual-revenue threshold. Keep the license terms and attribution in place.
 
 ## Important limitation
 
-Truth Checker is an **investigation aid, not a guarantee of truth**. Web evidence can be incomplete, outdated, biased, or wrong. The app is designed to expose that uncertainty rather than hide it.
+Truth Checker is an **investigation aid, not a guarantee of truth**. Wikipedia may be incomplete or outdated, and a small local model can misunderstand evidence. Important claims should be checked against primary documents, official datasets, and authoritative independent sources.
 
 ## Creator
 
-Built independently by **Koglesh R. Murugan**, a 16-year-old student developer from Malaysia.
+Built independently by **Koglesh R. Murugan**, a student developer from Malaysia.
 
 > **Investigate before you believe.**
